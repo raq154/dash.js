@@ -34,7 +34,7 @@ import FactoryMaker from '../../../core/FactoryMaker';
 function HandlerHelpers() {
     return {
         reconstructFullMetricName: function (key, n, type) {
-            let mn = key;
+            var mn = key;
 
             if (n) {
                 mn += '(' + n;
@@ -51,17 +51,17 @@ function HandlerHelpers() {
 
         validateN: function (n_ms) {
             if (!n_ms) {
-                throw new Error('missing n');
+                throw 'missing n';
             }
 
             if (isNaN(n_ms)) {
-                throw new Error('n is NaN');
+                throw 'n is NaN';
             }
 
             // n is a positive integer is defined to refer to the metric
             // in which the buffer level is recorded every n ms.
             if (n_ms < 0) {
-                throw new Error('n must be positive');
+                throw 'n must be positive';
             }
 
             return n_ms;

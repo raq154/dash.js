@@ -59,7 +59,7 @@ function MetricsCollectionController(config) {
 
             if (!metricsControllers.hasOwnProperty(key)) {
                 try {
-                    let controller = MetricsController(context).create(config);
+                    var controller = MetricsController(context).create(config);
                     controller.initialize(m);
                     metricsControllers[key] = controller;
                 } catch (e) {
@@ -82,7 +82,7 @@ function MetricsCollectionController(config) {
         );
     }
 
-    function resetMetricsControllers() {
+    function reset() {
         Object.keys(metricsControllers).forEach(key => {
             metricsControllers[key].reset();
         });
@@ -91,20 +91,16 @@ function MetricsCollectionController(config) {
     }
 
     function setup() {
-        eventBus.on(Events.MANIFEST_UPDATED, update);
-        eventBus.on(Events.STREAM_TEARDOWN_COMPLETE, resetMetricsControllers);
-    }
 
-    function reset() {
-        eventBus.off(Events.MANIFEST_UPDATED, update);
-        eventBus.off(Events.STREAM_TEARDOWN_COMPLETE, resetMetricsControllers);
+
+        eventBus.on(Events.MANIFEST_UPDATED, update);
+        eventBus.on(Events.STREAM_TEARDOWN_COMPLETE, reset);
     }
 
     setup();
 
-    return {
-        reset: reset
-    };
+    // don't export any actual methods
+    return {};
 }
 
 MetricsCollectionController.__dashjs_factory_name = 'MetricsCollectionController';

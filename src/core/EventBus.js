@@ -30,84 +30,76 @@
  */
 import FactoryMaker from './FactoryMaker';
 
-const EVENT_PRIORITY_LOW = 0;
-const EVENT_PRIORITY_HIGH = 5000;
-
 function EventBus() {
 
+    let instance;
     let handlers = {};
 
-    function on(type, listener, scope, priority = EVENT_PRIORITY_LOW) {
 
+    function on(type, listener, scope) {
         if (!type) {
             throw new Error('event type cannot be null or undefined');
         }
+
         if (!listener || typeof (listener) !== 'function') {
             throw new Error('listener must be a function: ' + listener);
         }
 
         if (getHandlerIdx(type, listener, scope) >= 0) return;
 
-        handlers[type] = handlers[type] || [];
-
-        const handler = {
+        var handler = {
             callback: listener,
-            scope: scope,
-            priority: priority
+            scope: scope
         };
 
-        const inserted = handlers[type].some((item , idx) => {
-            if (item && priority > item.priority ) {
-                handlers[type].splice(idx, 0, handler);
-                return true;
-            }
-        });
-
-        if (!inserted) {
-            handlers[type].push(handler);
-        }
+        handlers[type] = handlers[type] || [];
+        handlers[type].push(handler);
     }
 
     function off(type, listener, scope) {
         if (!type || !listener || !handlers[type]) return;
-        const idx = getHandlerIdx(type, listener, scope);
+
+        var idx = getHandlerIdx(type, listener, scope);
+
         if (idx < 0) return;
-        handlers[type][idx] = null;
+
+        handlers[type].splice(idx, 1);
     }
 
-    function trigger(type, payload) {
+    function trigger(type, args) {
         if (!type || !handlers[type]) return;
 
-        payload = payload || {};
+        args = args || {};
 
-        if (payload.hasOwnProperty('type')) throw new Error('\'type\' is a reserved word for event dispatching');
+        if (args.hasOwnProperty('type')) {
+            throw new Error('\'type\' is a reserved word for event dispatching');
+        }
 
-        payload.type = type;
+        args.type = type;
 
-        handlers[type] = handlers[type].filter((item) => item);
-        handlers[type].forEach( handler => handler && handler.callback.call(handler.scope, payload) );
-    }
-
-    function getHandlerIdx(type, listener, scope) {
-
-        let idx = -1;
-
-        if (!handlers[type]) return idx;
-
-        handlers[type].some( (item, index) => {
-            if (item && item.callback === listener && (!scope || scope === item.scope)) {
-                idx = index;
-                return true;
-            }
+        handlers[type].forEach(function (handler) {
+            handler.callback.call(handler.scope, args);
         });
-        return idx;
     }
 
     function reset() {
         handlers = {};
     }
 
-    const instance = {
+    function getHandlerIdx(type, listener, scope) {
+        var handlersForType = handlers[type];
+        var result = -1;
+
+        if (!handlersForType || handlersForType.length === 0) return result;
+
+        for (var i = 0; i < handlersForType.length; i++) {
+            if (handlersForType[i].callback === listener && (!scope || scope === handlersForType[i].scope)) return i;
+        }
+
+        return result;
+    }
+
+    instance = {
         on: on,
         off: off,
         trigger: trigger,
@@ -118,8 +110,4 @@ function EventBus() {
 }
 
 EventBus.__dashjs_factory_name = 'EventBus';
-const factory = FactoryMaker.getSingletonFactory(EventBus);
-factory.EVENT_PRIORITY_LOW = EVENT_PRIORITY_LOW;
-factory.EVENT_PRIORITY_HIGH = EVENT_PRIORITY_HIGH;
-FactoryMaker.updateSingletonFactory(EventBus.__dashjs_factory_name, factory);
-export default factory;
+export default FactoryMaker.getSingletonFactory(EventBus);

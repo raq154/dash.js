@@ -28,9 +28,9 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import Constants from '../constants/Constants';
 import BufferController from './BufferController';
 import URIQueryAndFragmentModel from '../models/URIQueryAndFragmentModel';
+import MediaPlayerModel from '../../streaming/models/MediaPlayerModel';
 import EventBus from '../../core/EventBus';
 import Events from '../../core/events/Events';
 import FactoryMaker from '../../core/FactoryMaker';
@@ -43,6 +43,7 @@ function PlaybackController() {
     let eventBus = EventBus(context).getInstance();
 
     let instance,
+        element,
         streamController,
         timelineConverter,
         metricsModel,
@@ -61,15 +62,23 @@ function PlaybackController() {
         playOnceInitialized;
 
     function setup() {
-        reset();
+        currentTime = 0;
+        liveStartTime = NaN;
+        wallclockTimeIntervalId = null;
+        isDynamic = null;
+        playOnceInitialized = false;
+        commonEarliestTime = {};
+        mediaPlayerModel = MediaPlayerModel(context).getInstance();
     }
 
     function initialize(StreamInfo) {
         streamInfo = StreamInfo;
+        element = videoModel.getElement();
         addAllListeners();
         isDynamic = streamInfo.manifestInfo.isDynamic;
         liveStartTime = streamInfo.start;
         eventBus.on(Events.DATA_UPDATE_COMPLETED, onDataUpdateCompleted, this);
+        eventBus.on(Events.LIVE_EDGE_SEARCH_COMPLETED, onLiveEdgeSearchCompleted, this);
         eventBus.on(Events.BYTES_APPENDED, onBytesAppended, this);
         eventBus.on(Events.BUFFER_LEVEL_STATE_CHANGED, onBufferLevelStateChanged, this);
         eventBus.on(Events.PERIOD_SWITCH_STARTED, onPeriodSwitchStarted, this);
@@ -81,69 +90,80 @@ function PlaybackController() {
     }
 
     function onPeriodSwitchStarted(e) {
-        if (!isDynamic && e.fromStreamInfo && commonEarliestTime[e.fromStreamInfo.id] !== undefined) {
+        if (e.fromStreamInfo && commonEarliestTime[e.fromStreamInfo.id]) {
             delete commonEarliestTime[e.fromStreamInfo.id];
         }
     }
 
     function getTimeToStreamEnd() {
-        const startTime = getStreamStartTime(true);
-        const offset = isDynamic ? startTime - streamInfo.start : 0;
-        return startTime + (streamInfo.duration - offset) - getTime();
+        return ((getStreamStartTime(true) + streamInfo.duration) - getTime());
+    }
+
+    function isPlaybackStarted() {
+        return getTime() > 0;
+    }
+
+    function getStreamId() {
+        return streamInfo.id;
+    }
+
+    function getStreamDuration() {
+        return streamInfo.duration;
     }
 
     function play() {
-        if (videoModel && videoModel.getElement()) {
-            videoModel.play();
+        if (element) {
+            element.autoplay = true;
+            element.play();
         } else {
             playOnceInitialized = true;
         }
     }
 
     function isPaused() {
-        return videoModel ? videoModel.isPaused() : null;
+        if (!element) return;
+        return element.paused;
     }
 
     function pause() {
-        if (videoModel) {
-            videoModel.pause();
-        }
+        if (!element) return;
+        element.pause();
+        element.autoplay = false;
     }
 
     function isSeeking() {
-        return videoModel ? videoModel.isSeeking() : null;
+        if (!element) return;
+        return element.seeking;
     }
 
     function seek(time) {
-        if (videoModel) {
-            eventBus.trigger(Events.PLAYBACK_SEEK_ASKED);
-            log('Requesting seek to time: ' + time);
-            videoModel.setCurrentTime(time);
-        }
+        if (!videoModel) return;
+        log('Requesting seek to time: ' + time);
+        videoModel.setCurrentTime(time);
     }
 
     function getTime() {
-        return videoModel ? videoModel.getTime() : null;
+        if (!element) return;
+        return element.currentTime;
     }
 
     function getPlaybackRate() {
-        return videoModel ? videoModel.getPlaybackRate() : null;
+        if (!element) return;
+        return element.playbackRate;
     }
 
     function getPlayedRanges() {
-        return videoModel ? videoModel.getPlayedRanges() : null;
+        if (!element) return;
+        return element.played;
     }
 
     function getEnded() {
-        return videoModel ? videoModel.getEnded() : null;
+        if (!element) return;
+        return element.ended;
     }
 
     function getIsDynamic() {
         return isDynamic;
-    }
-
-    function getStreamController() {
-        return streamController;
     }
 
     function setLiveStartTime(value) {
@@ -162,12 +182,12 @@ function PlaybackController() {
      * @memberof PlaybackController#
      */
     function computeLiveDelay(fragmentDuration, dvrWindowSize) {
-        let mpd = dashManifestModel.getMpd(manifestModel.getValue());
+        var mpd = dashManifestModel.getMpd(manifestModel.getValue());
 
         let delay;
         const END_OF_PLAYLIST_PADDING = 10;
 
-        if (mediaPlayerModel.getUseSuggestedPresentationDelay() && mpd.hasOwnProperty(Constants.SUGGESTED_PRESENTATION_DELAY)) {
+        if (mediaPlayerModel.getUseSuggestedPresentationDelay() && mpd.hasOwnProperty('suggestedPresentationDelay')) {
             delay = mpd.suggestedPresentationDelay;
         } else if (mediaPlayerModel.getLiveDelay()) {
             delay = mediaPlayerModel.getLiveDelay(); // If set by user, this value takes precedence
@@ -186,21 +206,19 @@ function PlaybackController() {
     }
 
     function reset() {
-        currentTime = 0;
-        liveStartTime = NaN;
-        wallclockTimeIntervalId = null;
-        playOnceInitialized = false;
-        commonEarliestTime = {};
-        if (videoModel) {
+        if (videoModel && element) {
             eventBus.off(Events.DATA_UPDATE_COMPLETED, onDataUpdateCompleted, this);
             eventBus.off(Events.BUFFER_LEVEL_STATE_CHANGED, onBufferLevelStateChanged, this);
+            eventBus.off(Events.LIVE_EDGE_SEARCH_COMPLETED, onLiveEdgeSearchCompleted, this);
             eventBus.off(Events.BYTES_APPENDED, onBytesAppended, this);
             stopUpdatingWallclockTime();
             removeAllListeners();
         }
         videoModel = null;
         streamInfo = null;
+        element = null;
         isDynamic = null;
+        setup();
     }
 
     function setConfig(config) {
@@ -224,9 +242,6 @@ function PlaybackController() {
         if (config.dashManifestModel) {
             dashManifestModel = config.dashManifestModel;
         }
-        if (config.mediaPlayerModel) {
-            mediaPlayerModel = config.mediaPlayerModel;
-        }
         if (config.adapter) {
             adapter = config.adapter;
         }
@@ -242,14 +257,7 @@ function PlaybackController() {
      */
     function getStreamStartTime(ignoreStartOffset) {
         let presentationStartTime;
-        let fragData = URIQueryAndFragmentModel(context).getInstance().getURIFragmentData();
-        let fragS = parseInt(fragData.s, 10);
-        let fragT = parseInt(fragData.t, 10);
-        let startTimeOffset = NaN;
-
-        if (!ignoreStartOffset) {
-            startTimeOffset = !isNaN(fragS) ? fragS : fragT;
-        }
+        let startTimeOffset = !ignoreStartOffset ? parseInt(URIQueryAndFragmentModel(context).getInstance().getURIFragmentData().s, 10) : NaN;
 
         if (isDynamic) {
             if (!isNaN(startTimeOffset) && startTimeOffset > 1262304000) {
@@ -279,19 +287,18 @@ function PlaybackController() {
     }
 
     function getActualPresentationTime(currentTime) {
-        let metrics = metricsModel.getReadOnlyMetricsFor(Constants.VIDEO) || metricsModel.getReadOnlyMetricsFor(Constants.AUDIO);
-        let DVRMetrics = dashMetrics.getCurrentDVRInfo(metrics);
-        let DVRWindow = DVRMetrics ? DVRMetrics.range : null;
-        let actualTime;
+        var metrics = metricsModel.getReadOnlyMetricsFor('video') || metricsModel.getReadOnlyMetricsFor('audio');
+        var DVRMetrics = dashMetrics.getCurrentDVRInfo(metrics);
+        var DVRWindow = DVRMetrics ? DVRMetrics.range : null;
+        var actualTime;
 
         if (!DVRWindow) return NaN;
-        if (currentTime > DVRWindow.end) {
-            actualTime = Math.max(DVRWindow.end - streamInfo.manifestInfo.minBufferTime * 2, DVRWindow.start);
-        } else if (currentTime < DVRWindow.start) {
-            actualTime = DVRWindow.start;
-        } else {
+
+        if ((currentTime >= DVRWindow.start) && (currentTime <= DVRWindow.end)) {
             return currentTime;
         }
+
+        actualTime = Math.max(DVRWindow.end - streamInfo.manifestInfo.minBufferTime * 2, DVRWindow.start);
 
         return actualTime;
     }
@@ -299,7 +306,7 @@ function PlaybackController() {
     function startUpdatingWallclockTime() {
         if (wallclockTimeIntervalId !== null) return;
 
-        const tick = function () {
+        var tick = function () {
             onWallclockTime();
         };
 
@@ -311,12 +318,19 @@ function PlaybackController() {
         wallclockTimeIntervalId = null;
     }
 
-    function updateCurrentTime() {
+    function seekToStartTimeOffset() {
+        let initialSeekTime = getStreamStartTime(false);
+        if (initialSeekTime > 0) {
+            seek(initialSeekTime);
+            log('Starting playback at offset: ' + initialSeekTime);
+        }
+    }
 
-        if (isPaused() || !isDynamic || videoModel.getReadyState() === 0) return;
-        let currentTime = getTime();
-        let actualTime = getActualPresentationTime(currentTime);
-        let timeChanged = (!isNaN(actualTime) && actualTime !== currentTime);
+    function updateCurrentTime() {
+        if (isPaused() || !isDynamic || element.readyState === 0) return;
+        var currentTime = getTime();
+        var actualTime = getActualPresentationTime(currentTime);
+        var timeChanged = (!isNaN(actualTime) && actualTime !== currentTime);
         if (timeChanged) {
             seek(actualTime);
         }
@@ -325,13 +339,19 @@ function PlaybackController() {
     function onDataUpdateCompleted(e) {
         if (e.error) return;
 
-        let representationInfo = adapter.convertDataToTrack(e.currentRepresentation);
+        let representationInfo = adapter.convertDataToTrack(manifestModel.getValue(), e.currentRepresentation);
         let info = representationInfo.mediaInfo.streamInfo;
 
         if (streamInfo.id !== info.id) return;
         streamInfo = info;
 
         updateCurrentTime();
+    }
+
+    function onLiveEdgeSearchCompleted(e) {
+        //This is here to catch the case when live edge search takes longer than playback metadata
+        if (e.error || element.readyState === 0) return;
+        seekToStartTimeOffset();
     }
 
     function onCanPlay() {
@@ -369,7 +389,7 @@ function PlaybackController() {
 
     function onPlaybackTimeUpdated() {
         //log("Native video element event: timeupdate");
-        let time = getTime();
+        var time = getTime();
         if (time === currentTime) return;
         currentTime = time;
         eventBus.trigger(Events.PLAYBACK_TIME_UPDATED, {timeToEnd: getTimeToStreamEnd(), time: time});
@@ -381,13 +401,16 @@ function PlaybackController() {
     }
 
     function onPlaybackRateChanged() {
-        let rate = getPlaybackRate();
+        var rate = getPlaybackRate();
         log('Native video element event: ratechange: ', rate);
         eventBus.trigger(Events.PLAYBACK_RATE_CHANGED, { playbackRate: rate });
     }
 
     function onPlaybackMetaDataLoaded() {
         log('Native video element event: loadedmetadata');
+        if ((!isDynamic && streamInfo.isFirst) || timelineConverter.isTimeSyncCompleted()) {
+            seekToStartTimeOffset();
+        }
         eventBus.trigger(Events.PLAYBACK_METADATA_LOADED);
         startUpdatingWallclockTime();
     }
@@ -411,25 +434,13 @@ function PlaybackController() {
     function onBytesAppended(e) {
         let ranges = e.bufferedRanges;
         if (!ranges || !ranges.length) return;
-        if (commonEarliestTime[streamInfo.id] === false) {
-            //stream has already been started.
-            return;
+        let bufferedStart = Math.max(ranges.start(0), streamInfo.start);
+        let earliestTime = commonEarliestTime[streamInfo.id] === undefined ? bufferedStart : Math.max(commonEarliestTime[streamInfo.id], bufferedStart);
+        if (earliestTime === commonEarliestTime[streamInfo.id]) return;
+        if (!isDynamic && getStreamStartTime(true) < earliestTime && getTime() < earliestTime) {
+            seek(earliestTime);
         }
-
-        let type = e.sender.getType();
-
-        if (commonEarliestTime[streamInfo.id] === undefined) {
-            commonEarliestTime[streamInfo.id] = [];
-        }
-
-        if (commonEarliestTime[streamInfo.id][type] === undefined) {
-            commonEarliestTime[streamInfo.id][type] = Math.max(ranges.start(0), streamInfo.start);
-        }
-
-        if (commonEarliestTime[streamInfo.id].audio && commonEarliestTime[streamInfo.id].video) {
-            seek(commonEarliestTime[streamInfo.id].audio < commonEarliestTime[streamInfo.id].video ? commonEarliestTime[streamInfo.id].video : commonEarliestTime[streamInfo.id].audio);
-            commonEarliestTime[streamInfo.id] = false;
-        }
+        commonEarliestTime[streamInfo.id] = earliestTime;
     }
 
     function onBufferLevelStateChanged(e) {
@@ -439,33 +450,33 @@ function PlaybackController() {
     }
 
     function addAllListeners() {
-        videoModel.addEventListener('canplay', onCanPlay);
-        videoModel.addEventListener('play', onPlaybackStart);
-        videoModel.addEventListener('playing', onPlaybackPlaying);
-        videoModel.addEventListener('pause', onPlaybackPaused);
-        videoModel.addEventListener('error', onPlaybackError);
-        videoModel.addEventListener('seeking', onPlaybackSeeking);
-        videoModel.addEventListener('seeked', onPlaybackSeeked);
-        videoModel.addEventListener('timeupdate', onPlaybackTimeUpdated);
-        videoModel.addEventListener('progress', onPlaybackProgress);
-        videoModel.addEventListener('ratechange', onPlaybackRateChanged);
-        videoModel.addEventListener('loadedmetadata', onPlaybackMetaDataLoaded);
-        videoModel.addEventListener('ended', onPlaybackEnded);
+        element.addEventListener('canplay', onCanPlay);
+        element.addEventListener('play', onPlaybackStart);
+        element.addEventListener('playing', onPlaybackPlaying);
+        element.addEventListener('pause', onPlaybackPaused);
+        element.addEventListener('error', onPlaybackError);
+        element.addEventListener('seeking', onPlaybackSeeking);
+        element.addEventListener('seeked', onPlaybackSeeked);
+        element.addEventListener('timeupdate', onPlaybackTimeUpdated);
+        element.addEventListener('progress', onPlaybackProgress);
+        element.addEventListener('ratechange', onPlaybackRateChanged);
+        element.addEventListener('loadedmetadata', onPlaybackMetaDataLoaded);
+        element.addEventListener('ended', onPlaybackEnded);
     }
 
     function removeAllListeners() {
-        videoModel.removeEventListener('canplay', onCanPlay);
-        videoModel.removeEventListener('play', onPlaybackStart);
-        videoModel.removeEventListener('playing', onPlaybackPlaying);
-        videoModel.removeEventListener('pause', onPlaybackPaused);
-        videoModel.removeEventListener('error', onPlaybackError);
-        videoModel.removeEventListener('seeking', onPlaybackSeeking);
-        videoModel.removeEventListener('seeked', onPlaybackSeeked);
-        videoModel.removeEventListener('timeupdate', onPlaybackTimeUpdated);
-        videoModel.removeEventListener('progress', onPlaybackProgress);
-        videoModel.removeEventListener('ratechange', onPlaybackRateChanged);
-        videoModel.removeEventListener('loadedmetadata', onPlaybackMetaDataLoaded);
-        videoModel.removeEventListener('ended', onPlaybackEnded);
+        element.removeEventListener('canplay', onCanPlay);
+        element.removeEventListener('play', onPlaybackStart);
+        element.removeEventListener('playing', onPlaybackPlaying);
+        element.removeEventListener('pause', onPlaybackPaused);
+        element.removeEventListener('error', onPlaybackError);
+        element.removeEventListener('seeking', onPlaybackSeeking);
+        element.removeEventListener('seeked', onPlaybackSeeked);
+        element.removeEventListener('timeupdate', onPlaybackTimeUpdated);
+        element.removeEventListener('progress', onPlaybackProgress);
+        element.removeEventListener('ratechange', onPlaybackRateChanged);
+        element.removeEventListener('loadedmetadata', onPlaybackMetaDataLoaded);
+        element.removeEventListener('ended', onPlaybackEnded);
     }
 
     instance = {
@@ -473,12 +484,14 @@ function PlaybackController() {
         setConfig: setConfig,
         getStreamStartTime: getStreamStartTime,
         getTimeToStreamEnd: getTimeToStreamEnd,
+        isPlaybackStarted: isPlaybackStarted,
+        getStreamId: getStreamId,
+        getStreamDuration: getStreamDuration,
         getTime: getTime,
         getPlaybackRate: getPlaybackRate,
         getPlayedRanges: getPlayedRanges,
         getEnded: getEnded,
         getIsDynamic: getIsDynamic,
-        getStreamController: getStreamController,
         setLiveStartTime: setLiveStartTime,
         getLiveStartTime: getLiveStartTime,
         computeLiveDelay: computeLiveDelay,

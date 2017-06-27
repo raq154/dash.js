@@ -28,17 +28,20 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import Constants from '../constants/Constants';
+
 import FragmentModel from '../models/FragmentModel';
+import MediaPlayerModel from '../models/MediaPlayerModel';
+import {HTTPRequest} from '../vo/metrics/HTTPRequest';
 import SourceBufferController from './SourceBufferController';
 import AbrController from './AbrController';
+import PlaybackController from './PlaybackController';
 import MediaController from './MediaController';
+import CustomTimeRanges from '../utils/CustomTimeRanges';
 import EventBus from '../../core/EventBus';
 import Events from '../../core/events/Events';
 import BoxParser from '../utils/BoxParser';
 import FactoryMaker from '../../core/FactoryMaker';
 import Debug from '../../core/Debug';
-import InitCache from '../utils/InitCache';
 
 const BUFFER_LOADED = 'bufferLoaded';
 const BUFFER_EMPTY = 'bufferStalled';
@@ -46,30 +49,32 @@ const STALL_THRESHOLD = 0.5;
 
 function BufferController(config) {
 
-    const context = this.context;
-    const eventBus = EventBus(context).getInstance();
-    const metricsModel = config.metricsModel;
-    const mediaPlayerModel = config.mediaPlayerModel;
-    const sourceBufferController = config.sourceBufferController;
-    const errHandler = config.errHandler;
-    const streamController = config.streamController;
-    const mediaController = config.mediaController;
-    const adapter = config.adapter;
-    const textController = config.textController;
-    const abrController = config.abrController;
-    const playbackController = config.playbackController;
-    const type = config.type;
-    let streamProcessor = config.streamProcessor;
+    let context = this.context;
+    let log = Debug(context).getInstance().log;
+    let eventBus = EventBus(context).getInstance();
+
+    let metricsModel = config.metricsModel;
+    let manifestModel = config.manifestModel;
+    let sourceBufferController = config.sourceBufferController;
+    let errHandler = config.errHandler;
+    let mediaSourceController = config.mediaSourceController;
+    let streamController = config.streamController;
+    let mediaController = config.mediaController;
+    let adapter = config.adapter;
+    let virtualBuffer = config.virtualBuffer;
+    let textSourceBuffer = config.textSourceBuffer;
 
     let instance,
-        log,
         requiredQuality,
+        currentQuality,
         isBufferingCompleted,
         bufferLevel,
+        bufferTarget,
         criticalBufferLevel,
         mediaSource,
         maxAppendedIndex,
         lastIndex,
+        type,
         buffer,
         bufferState,
         appendedBytesInfo,
@@ -77,188 +82,272 @@ function BufferController(config) {
         appendingMediaChunk,
         isAppendingInProgress,
         isPruningInProgress,
-        initCache,
-        seekStartTime;
+        inbandEventFound,
+        playbackController,
+        streamProcessor,
+        abrController,
+        fragmentController,
+        scheduleController,
+        mediaPlayerModel,
+        clearBufferTimeout;
 
     function setup() {
-        log = Debug(context).getInstance().log.bind(instance);
-        requiredQuality = AbrController.QUALITY_DEFAULT;
+        requiredQuality = -1;
+        currentQuality = -1;
         isBufferingCompleted = false;
         bufferLevel = 0;
+        bufferTarget = 0;
         criticalBufferLevel = Number.POSITIVE_INFINITY;
-        maxAppendedIndex = 0;
-        lastIndex = Number.POSITIVE_INFINITY;
+        maxAppendedIndex = -1;
+        lastIndex = -1;
         buffer = null;
         bufferState = BUFFER_EMPTY;
         wallclockTicked = 0;
         appendingMediaChunk = false;
         isAppendingInProgress = false;
         isPruningInProgress = false;
+        inbandEventFound = false;
+        clearBufferTimeout = null;
     }
 
-    function initialize(Source) {
+    function initialize(Type, Source, StreamProcessor) {
+        type = Type;
         setMediaSource(Source);
-
-        initCache = InitCache(context).getInstance();
+        streamProcessor = StreamProcessor;
+        mediaPlayerModel = MediaPlayerModel(context).getInstance();
+        playbackController = PlaybackController(context).getInstance();
+        abrController = AbrController(context).getInstance();
+        fragmentController = streamProcessor.getFragmentController();
+        scheduleController = streamProcessor.getScheduleController();
         requiredQuality = abrController.getQualityFor(type, streamProcessor.getStreamInfo());
 
         eventBus.on(Events.DATA_UPDATE_COMPLETED, onDataUpdateCompleted, this);
         eventBus.on(Events.INIT_FRAGMENT_LOADED, onInitFragmentLoaded, this);
         eventBus.on(Events.MEDIA_FRAGMENT_LOADED, onMediaFragmentLoaded, this);
-        eventBus.on(Events.QUALITY_CHANGE_REQUESTED, onQualityChanged, this);
+        eventBus.on(Events.QUALITY_CHANGED, onQualityChanged, this);
         eventBus.on(Events.STREAM_COMPLETED, onStreamCompleted, this);
         eventBus.on(Events.PLAYBACK_PROGRESS, onPlaybackProgression, this);
         eventBus.on(Events.PLAYBACK_TIME_UPDATED, onPlaybackProgression, this);
         eventBus.on(Events.PLAYBACK_RATE_CHANGED, onPlaybackRateChanged, this);
         eventBus.on(Events.PLAYBACK_SEEKING, onPlaybackSeeking, this);
         eventBus.on(Events.WALLCLOCK_TIME_UPDATED, onWallclockTimeUpdated, this);
-        eventBus.on(Events.CURRENT_TRACK_CHANGED, onCurrentTrackChanged, this, EventBus.EVENT_PRIORITY_HIGH);
+        eventBus.on(Events.CURRENT_TRACK_CHANGED, onCurrentTrackChanged, this);
         eventBus.on(Events.SOURCEBUFFER_APPEND_COMPLETED, onAppended, this);
         eventBus.on(Events.SOURCEBUFFER_REMOVE_COMPLETED, onRemoved, this);
+        eventBus.on(Events.CHUNK_APPENDED, onChunkAppended, this);
     }
 
     function createBuffer(mediaInfo) {
         if (!mediaInfo || !mediaSource || !streamProcessor) return null;
 
-        let sourceBuffer = null;
+        var sourceBuffer = null;
 
         try {
             sourceBuffer = sourceBufferController.createSourceBuffer(mediaSource, mediaInfo);
 
-            if (sourceBuffer && sourceBuffer.hasOwnProperty(Constants.INITIALIZE)) {
-                sourceBuffer.initialize(type, streamProcessor);
+            if (sourceBuffer && sourceBuffer.hasOwnProperty('initialize')) {
+                sourceBuffer.initialize(type, this);
             }
         } catch (e) {
             errHandler.mediaSourceError('Error creating ' + type + ' source buffer.');
         }
+
         setBuffer(sourceBuffer);
         updateBufferTimestampOffset(streamProcessor.getRepresentationInfoForQuality(requiredQuality).MSETimeOffset);
+        // We may already have some segments in a virtual buffer by this moment. Let's try to append them to the real one.
+        appendNext();
+
         return sourceBuffer;
     }
 
     function isActive() {
-        return streamProcessor && streamController ? streamProcessor.getStreamInfo().id === streamController.getActiveStreamInfo().id : false;
+        var thisStreamId = streamProcessor.getStreamInfo().id;
+        var activeStreamId = streamController.getActiveStreamInfo().id;
+
+        return thisStreamId === activeStreamId;
     }
 
     function onInitFragmentLoaded(e) {
-        if (e.fragmentModel !== streamProcessor.getFragmentModel()) return;
-        log('Init fragment finished loading saving to', type + '\'s init cache');
-        initCache.save(e.chunk);
-        appendToBuffer(e.chunk);
-    }
+        // We received a new init chunk.
+        // We just want to cache it in the virtual buffer here.
+        // Then pass control to appendNext() to handle any other logic.
 
-    function switchInitData(streamId, representationId) {
-        const chunk = initCache.extract(streamId, representationId);
-        if (chunk) {
-            appendToBuffer(chunk);
-        } else {
-            eventBus.trigger(Events.INIT_REQUESTED, {sender: instance});
-        }
+        var chunk;
+
+        if (e.fragmentModel !== streamProcessor.getFragmentModel()) return;
+
+        log('Initialization finished loading');
+        chunk = e.chunk;
+        // cache the initialization data to use it next time the quality has changed
+        virtualBuffer.append(chunk);
+        switchInitData(getStreamId(),  requiredQuality);
     }
 
     function onMediaFragmentLoaded(e) {
         if (e.fragmentModel !== streamProcessor.getFragmentModel()) return;
 
-        const chunk = e.chunk;
-        const bytes = chunk.bytes;
-        const quality = chunk.quality;
-        const currentRepresentation = streamProcessor.getRepresentationInfoForQuality(quality);
-        const eventStreamMedia = adapter.getEventsFor(currentRepresentation.mediaInfo, streamProcessor);
-        const eventStreamTrack = adapter.getEventsFor(currentRepresentation, streamProcessor);
+        var events;
+        var chunk = e.chunk;
+        var bytes = chunk.bytes;
+        var quality = chunk.quality;
+        var index = chunk.index;
+        var request = streamProcessor.getFragmentModel().getRequests({ state: FragmentModel.FRAGMENT_MODEL_EXECUTED, quality: quality, index: index })[0];
+        var currentRepresentation = streamProcessor.getRepresentationInfoForQuality(quality);
+        var manifest = manifestModel.getValue();
+        var eventStreamMedia = adapter.getEventsFor(manifest, currentRepresentation.mediaInfo, streamProcessor);
+        var eventStreamTrack = adapter.getEventsFor(manifest, currentRepresentation, streamProcessor);
 
-        if (eventStreamMedia && eventStreamMedia.length > 0 || eventStreamTrack && eventStreamTrack.length > 0) {
-            const request = streamProcessor.getFragmentModel().getRequests({
-                state: FragmentModel.FRAGMENT_MODEL_EXECUTED,
-                quality: quality,
-                index: chunk.index
-            })[0];
-
-            const events = handleInbandEvents(bytes, request, eventStreamMedia, eventStreamTrack);
+        if (eventStreamMedia.length > 0 || eventStreamTrack.length > 0) {
+            events = handleInbandEvents(bytes, request, eventStreamMedia, eventStreamTrack);
             streamProcessor.getEventController().addInbandEvents(events);
         }
 
-        appendToBuffer(chunk);
+        chunk.bytes = deleteInbandEvents(bytes);
+
+        virtualBuffer.append(chunk);
+        appendNext();
     }
 
+    function appendNext() {
+        // If we have an appendingMediaChunk in progress, process it.
+        // Otherwise, try to get a media chunk from the virtual buffer.
+        // If we have no media chunk available, do nothing - return.
+        // If the media chunk we have matches currentQuality, append the media chunk to the source buffer.
+        // Otherwise, leave the media chunk in appendingMediaChunk and check the init chunk corresponding to the media chunk.
+        // If we have the corresponding init chunk, append the init chunk to the source buffer; appendingMediaChunk will be processed shortly through onAppended().
+        // Otherwise, fire the Events.INIT_REQUESTED event.
+        if (!buffer || isAppendingInProgress || !hasEnoughSpaceToAppend()) return;
+
+        var streamId = getStreamId();
+        var chunk;
+
+        if (appendingMediaChunk) {
+            chunk = appendingMediaChunk;
+        } else {
+
+            chunk = virtualBuffer.extract({streamId: streamId, mediaType: type, segmentType: HTTPRequest.MEDIA_SEGMENT_TYPE, limit: 1})[0];
+            if (!chunk) {
+                return;
+            }
+
+            appendingMediaChunk = chunk;
+        }
+
+        if (chunk.quality === currentQuality) {
+            appendingMediaChunk = false;
+            appendToBuffer(chunk);
+        }
+        else {
+            // we need to change currentQuality by init data
+            switchInitData(streamId, appendingMediaChunk.quality);
+        }
+    }
+
+    function switchInitData(streamId, quality) {
+
+        var filter = { streamId: streamId, mediaType: type, segmentType: HTTPRequest.INIT_SEGMENT_TYPE, quality: quality };
+        var chunk = virtualBuffer.getChunks(filter)[0];
+
+        if (chunk) {
+            if (!buffer) return;
+
+            appendToBuffer(chunk);
+        } else {
+            // if we have not loaded the init fragment for the current quality, do it
+            eventBus.trigger(Events.INIT_REQUESTED, {sender: instance, requiredQuality: quality});
+        }
+    }
 
     function appendToBuffer(chunk) {
         isAppendingInProgress = true;
         appendedBytesInfo = chunk;
         sourceBufferController.append(buffer, chunk);
 
-        if (chunk.mediaInfo.type === Constants.VIDEO) {
-            eventBus.trigger(Events.VIDEO_CHUNK_RECEIVED, {chunk: chunk});
+        if (chunk.mediaInfo.type === 'video') {
+            if (chunk.mediaInfo.embeddedCaptions) {
+                textSourceBuffer.append(chunk.bytes, chunk);
+            }
         }
     }
 
     function onAppended(e) {
-        if (buffer === e.buffer) {
-            if (e.error) {
-                if (e.error.code === SourceBufferController.QUOTA_EXCEEDED_ERROR_CODE) {
-                    criticalBufferLevel = sourceBufferController.getTotalBufferedTime(buffer) * 0.8;
-                }
-                if (e.error.code === SourceBufferController.QUOTA_EXCEEDED_ERROR_CODE || !hasEnoughSpaceToAppend()) {
-                    eventBus.trigger(Events.QUOTA_EXCEEDED, {sender: instance, criticalBufferLevel: criticalBufferLevel}); //Tells ScheduleController to stop scheduling.
-                    clearBuffer(getClearRange()); // Then we clear the buffer and onCleared event will tell ScheduleController to start scheduling again.
-                }
-                return;
-            }
+        if (buffer !== e.buffer) return;
 
-            if (appendedBytesInfo && !isNaN(appendedBytesInfo.index)) {
-                maxAppendedIndex = Math.max(appendedBytesInfo.index, maxAppendedIndex);
-                checkIfBufferingCompleted();
-            }
+        onPlaybackProgression();
 
-            const ranges = sourceBufferController.getAllRanges(buffer);
-            if (ranges && ranges.length > 0) {
-                for (let i = 0, len = ranges.length; i < len; i++) {
-                    log('Buffered Range for type:', type, ':', ranges.start(i), ' - ', ranges.end(i));
-                }
-            }
+        if (isBufferingCompleted && streamProcessor.getStreamInfo().isLast) {
+            mediaSourceController.signalEndOfStream(mediaSource);
+        }
 
-            onPlaybackProgression();
+        var ranges;
+
+        if (e.error) {
+            // if the append has failed because the buffer is full we should store the data
+            // that has not been appended and stop request scheduling. We also need to store
+            // the promise for this append because the next data can be appended only after
+            // this promise is resolved.
+            if (e.error.code === SourceBufferController.QUOTA_EXCEEDED_ERROR_CODE) {
+                virtualBuffer.append(appendedBytesInfo);
+                criticalBufferLevel = sourceBufferController.getTotalBufferedTime(buffer) * 0.8;
+                eventBus.trigger(Events.QUOTA_EXCEEDED, {sender: instance, criticalBufferLevel: criticalBufferLevel});
+                clearBuffer(getClearRange());
+            }
             isAppendingInProgress = false;
-            if (appendedBytesInfo) {
-                eventBus.trigger(Events.BYTES_APPENDED, {
-                    sender: instance,
-                    quality: appendedBytesInfo.quality,
-                    startTime: appendedBytesInfo.start,
-                    index: appendedBytesInfo.index,
-                    bufferedRanges: ranges
-                });
+            return;
+        }
+
+        if (!hasEnoughSpaceToAppend()) {
+            eventBus.trigger(Events.QUOTA_EXCEEDED, {sender: instance, criticalBufferLevel: criticalBufferLevel});
+            clearBuffer(getClearRange());
+        }
+
+        ranges = sourceBufferController.getAllRanges(buffer);
+
+        if (ranges) {
+            //log("Append complete: " + ranges.length);
+            if (ranges.length > 0) {
+                var i,
+                    len;
+
+                //log("Number of buffered ranges: " + ranges.length);
+                for (i = 0, len = ranges.length; i < len; i++) {
+                    log('Buffered Range: ' + ranges.start(i) + ' - ' + ranges.end(i));
+                }
             }
         }
+
+        //finish appending
+        isAppendingInProgress = false;
+        if (!isNaN(appendedBytesInfo.index)) {
+            virtualBuffer.storeAppendedChunk(appendedBytesInfo, buffer);
+            removeOldTrackData();
+            maxAppendedIndex = Math.max(appendedBytesInfo.index, maxAppendedIndex);
+            checkIfBufferingCompleted();
+        } else {
+            currentQuality = appendedBytesInfo.quality;
+            if (!streamProcessor.isDynamic()) {
+                appendNext();
+            }
+        }
+
+        eventBus.trigger(Events.BYTES_APPENDED, {sender: instance, quality: appendedBytesInfo.quality, startTime: appendedBytesInfo.start, index: appendedBytesInfo.index, bufferedRanges: ranges});
     }
 
     function onQualityChanged(e) {
-        if (requiredQuality === e.newQuality || type !== e.mediaType || streamProcessor.getStreamInfo().id !== e.streamInfo.id) return;
+        var newQuality = e.newQuality;
+        if (requiredQuality === newQuality || type !== e.mediaType || streamProcessor.getStreamInfo().id !== e.streamInfo.id) return;
 
-        updateBufferTimestampOffset(streamProcessor.getRepresentationInfoForQuality(e.newQuality).MSETimeOffset);
-        requiredQuality = e.newQuality;
+        updateBufferTimestampOffset(streamProcessor.getRepresentationInfoForQuality(newQuality).MSETimeOffset);
+        requiredQuality = newQuality;
     }
 
     //**********************************************************************
     // START Buffer Level, State & Sufficiency Handling.
     //**********************************************************************
     function onPlaybackSeeking() {
-        lastIndex = Number.POSITIVE_INFINITY;
-        isBufferingCompleted = false;
-        seekStartTime = undefined;
+        isAppendingInProgress = false;
         onPlaybackProgression();
-    }
 
-    function getWorkingTime() {
-        // This function returns current working time for buffer (either start time or current time if playback has started)
-        let ret = playbackController.getTime();
-
-        if (seekStartTime) {
-            // if there is a seek start time, the first buffer data will be available on maximum value between first buffer range value and seek start time.
-            let ranges = sourceBufferController.getAllRanges(buffer);
-            if (ranges && ranges.length) {
-                ret = Math.max(ranges.start(0), seekStartTime);
-            }
-        }
-        return ret;
     }
 
     function onPlaybackProgression() {
@@ -267,32 +356,41 @@ function BufferController(config) {
     }
 
     function updateBufferLevel() {
-        if (playbackController) {
-            bufferLevel = sourceBufferController.getBufferLength(buffer, getWorkingTime());
-            eventBus.trigger(Events.BUFFER_LEVEL_UPDATED, {sender: instance, bufferLevel: bufferLevel});
-            checkIfSufficientBuffer();
-        }
+        var currentTime = playbackController.getTime();
+
+        bufferLevel = sourceBufferController.getBufferLength(buffer, currentTime);
+        eventBus.trigger(Events.BUFFER_LEVEL_UPDATED, {sender: instance, bufferLevel: bufferLevel});
+        checkIfSufficientBuffer();
     }
 
     function addBufferMetrics() {
         if (!isActive()) return;
-        metricsModel.addBufferState(type, bufferState, streamProcessor.getScheduleController().getBufferTarget());
+
+        //TODO will need to fix how we get bufferTarget... since we ony load one at a time. but do it in the addBufferMetrics call not here
+        //bufferTarget = fragmentsToLoad > 0 ? (fragmentsToLoad * fragmentDuration) + bufferLevel : bufferTarget;
+        metricsModel.addBufferState(type, bufferState, bufferTarget);
+
+        //TODO may be needed for MULTIPERIOD PLEASE CHECK Turning this off for now... not really needed since we load sync...
+        //var level = bufferLevel,
+        //    virtualLevel;
+        //virtualLevel = virtualBuffer.getTotalBufferLevel(streamProcessor.getMediaInfo());
+        //if (virtualLevel) {
+        //    level += virtualLevel;
+        //}
+
         metricsModel.addBufferLevel(type, new Date(), bufferLevel * 1000);
     }
 
     function checkIfBufferingCompleted() {
-        const isLastIdxAppended = maxAppendedIndex >= lastIndex - 1; // Handles 0 and non 0 based request index
-        if (isLastIdxAppended && !isBufferingCompleted) {
-            isBufferingCompleted = true;
-            eventBus.trigger(Events.BUFFERING_COMPLETED, {sender: instance, streamInfo: streamProcessor.getStreamInfo()});
-        }
+        var isLastIdxAppended = maxAppendedIndex === (lastIndex - 1);
+
+        if (!isLastIdxAppended || isBufferingCompleted) return;
+
+        isBufferingCompleted = true;
+        eventBus.trigger(Events.BUFFERING_COMPLETED, {sender: instance, streamInfo: streamProcessor.getStreamInfo()});
     }
 
     function checkIfSufficientBuffer() {
-
-        // No need to check buffer if type is not audio or video (for example if several errors occur during text parsing, so that the buffer cannot be filled, no error must occur on video playback)
-        if (type !== 'audio' && type !== 'video') return;
-
         if (bufferLevel < STALL_THRESHOLD && !isBufferingCompleted) {
             notifyBufferStateChanged(BUFFER_EMPTY);
         } else {
@@ -301,32 +399,39 @@ function BufferController(config) {
     }
 
     function notifyBufferStateChanged(state) {
-        if (bufferState === state || (type === Constants.FRAGMENTED_TEXT && textController.getAllTracksAreDisabled())) return;
+        if (bufferState === state || (type === 'fragmentedText' && textSourceBuffer.getAllTracksAreDisabled())) return;
+
         bufferState = state;
         addBufferMetrics();
         eventBus.trigger(Events.BUFFER_LEVEL_STATE_CHANGED, {sender: instance, state: state, mediaType: type, streamInfo: streamProcessor.getStreamInfo()});
-        eventBus.trigger(state === BUFFER_LOADED ? Events.BUFFER_LOADED : Events.BUFFER_EMPTY, {mediaType: type});
-        log(state === BUFFER_LOADED ? 'Got enough buffer to start.' : 'Waiting for more buffer before starting playback.');
+        let eventType = state === BUFFER_LOADED ? Events.BUFFER_LOADED : Events.BUFFER_EMPTY;
+        eventBus.trigger(eventType, {mediaType: type});
+        log(state === BUFFER_LOADED ? ('Got enough buffer to start.') : ('Waiting for more buffer before starting playback.'));
     }
 
 
     function handleInbandEvents(data, request, mediaInbandEvents, trackInbandEvents) {
+        var fragmentStarttime = Math.max(isNaN(request.startTime) ? 0 : request.startTime, 0);
+        var eventStreams = [];
+        var events = [];
 
-        const fragmentStartTime = Math.max(isNaN(request.startTime) ? 0 : request.startTime, 0);
-        const eventStreams = [];
-        const events = [];
+        var eventBoxes,
+            event,
+            isoFile,
+            inbandEvents;
 
+        inbandEventFound = false;
         /* Extract the possible schemeIdUri : If a DASH client detects an event message box with a scheme that is not defined in MPD, the client is expected to ignore it */
-        const inbandEvents = mediaInbandEvents.concat(trackInbandEvents);
-        for (let i = 0, ln = inbandEvents.length; i < ln; i++) {
-            eventStreams[inbandEvents[i].schemeIdUri] = inbandEvents[i];
+        inbandEvents = mediaInbandEvents.concat(trackInbandEvents);
+        for (var loop = 0; loop < inbandEvents.length; loop++) {
+            eventStreams[inbandEvents[loop].schemeIdUri] = inbandEvents[loop];
         }
 
-        const isoFile = BoxParser(context).getInstance().parse(data);
-        const eventBoxes = isoFile.getBoxes('emsg');
+        isoFile = BoxParser(context).getInstance().parse(data);
+        eventBoxes = isoFile.getBoxes('emsg');
 
-        for (let i = 0, ln = eventBoxes.length; i < ln; i++) {
-            const event = adapter.getEvent(eventBoxes[i], eventStreams, fragmentStartTime);
+        for (var i = 0, ln = eventBoxes.length; i < ln; i++) {
+            event = adapter.getEvent(eventBoxes[i], eventStreams, fragmentStarttime);
 
             if (event) {
                 events.push(event);
@@ -336,17 +441,56 @@ function BufferController(config) {
         return events;
     }
 
+    function deleteInbandEvents(data) {
+
+        if (!inbandEventFound) {
+            return data;
+        }
+
+        var length = data.length;
+        var expTwo = Math.pow(256, 2);
+        var expThree = Math.pow(256, 3);
+        var modData = new Uint8Array(data.length);
+
+        var identifier,
+            size;
+        var i = 0;
+        var j = 0;
+
+        while (i < length) {
+
+            identifier = String.fromCharCode(data[i + 4],data[i + 5],data[i + 6],data[i + 7]);
+            size = data[i] * expThree + data[i + 1] * expTwo + data[i + 2] * 256 + data[i + 3] * 1;
+
+            if (identifier != 'emsg' ) {
+                for (var l = i ; l < i + size; l++) {
+                    modData[j] = data[l];
+                    j++;
+                }
+            }
+            i += size;
+
+        }
+
+        return modData.subarray(0,j);
+    }
+
     function hasEnoughSpaceToAppend() {
-        const totalBufferedTime = sourceBufferController.getTotalBufferedTime(buffer);
+        var totalBufferedTime = sourceBufferController.getTotalBufferedTime(buffer);
         return (totalBufferedTime < criticalBufferLevel);
     }
 
     /* prune buffer on our own in background to avoid browsers pruning buffer silently */
     function pruneBuffer() {
-        if (!buffer) return;
-        if (type === Constants.FRAGMENTED_TEXT) return;
-        const start = buffer.buffered.length ? buffer.buffered.start(0) : 0;
-        const bufferToPrune = playbackController.getTime() - start - mediaPlayerModel.getBufferToKeep();
+        if (type === 'fragmentedText') return;
+
+        log('try to prune buffer');
+
+        var start = buffer.buffered.length ? buffer.buffered.start(0) : 0;
+        var currentTime = playbackController.getTime();
+        // we want to get rid off buffer that is more than x seconds behind current time
+        var bufferToPrune = currentTime - start - mediaPlayerModel.getBufferToKeep();
+
         if (bufferToPrune > 0) {
             log('pruning buffer: ' + bufferToPrune + ' seconds.');
             isPruningInProgress = true;
@@ -354,53 +498,110 @@ function BufferController(config) {
         }
     }
 
-    function getClearRange(threshold) {
+    function getClearRange() {
+        var currentTime,
+            removeStart,
+            removeEnd,
+            range,
+            req;
 
         if (!buffer) return null;
 
+        currentTime = playbackController.getTime();
         // we need to remove data that is more than one fragment before the video currentTime
-        const currentTime = playbackController.getTime();
-        const req = streamProcessor.getFragmentModel().getRequests({state: FragmentModel.FRAGMENT_MODEL_EXECUTED, time: currentTime, threshold: threshold})[0];
-        const range = sourceBufferController.getBufferRange(buffer, currentTime);
+        req = streamProcessor.getFragmentModel().getRequests({state: FragmentModel.FRAGMENT_MODEL_EXECUTED, time: currentTime})[0];
+        removeEnd = (req && !isNaN(req.startTime)) ? req.startTime : Math.floor(currentTime);
 
-        let removeEnd = (req && !isNaN(req.startTime)) ? req.startTime : Math.floor(currentTime);
+        range = sourceBufferController.getBufferRange(buffer, currentTime);
+
         if ((range === null) && (buffer.buffered.length > 0)) {
-            removeEnd = buffer.buffered.end(buffer.buffered.length - 1);
+            removeEnd = buffer.buffered.end(buffer.buffered.length - 1 );
         }
 
-        return {
-            start: buffer.buffered.start(0),
-            end: removeEnd
-        };
+        removeStart = buffer.buffered.start(0);
+
+        return {start: removeStart, end: removeEnd};
     }
 
     function clearBuffer(range) {
         if (!range || !buffer) return;
-        sourceBufferController.remove(buffer, range.start, range.end, mediaSource);
+
+        var removeStart = range.start;
+        var removeEnd = range.end;
+
+        sourceBufferController.remove(buffer, removeStart, removeEnd, mediaSource);
     }
 
     function onRemoved(e) {
         if (buffer !== e.buffer) return;
 
+        // After the buffer has been cleared we need to update the virtual range that reflects the actual ranges
+        // of SourceBuffer. We also need to update the list of appended chunks
         if (isPruningInProgress) {
             isPruningInProgress = false;
         }
-
+        virtualBuffer.updateBufferedRanges({streamId: getStreamId(), mediaType: type}, sourceBufferController.getAllRanges(buffer));
         updateBufferLevel();
         eventBus.trigger(Events.BUFFER_CLEARED, {sender: instance, from: e.from, to: e.to, hasEnoughSpaceToAppend: hasEnoughSpaceToAppend()});
-        //TODO - REMEMBER removed a timerout hack calling clearBuffer after manifestInfo.minBufferTime * 1000 if !hasEnoughSpaceToAppend() Aug 04 2016
+        if (hasEnoughSpaceToAppend()) return;
+
+        if (clearBufferTimeout === null) {
+            clearBufferTimeout = setTimeout(function () {
+                clearBufferTimeout = null;
+                clearBuffer(getClearRange());
+            }, streamProcessor.getStreamInfo().manifestInfo.minBufferTime * 1000);
+        }
     }
 
     function updateBufferTimestampOffset(MSETimeOffset) {
-        // Each track can have its own @presentationTimeOffset, so we should set the offset
+        // each track can have its own @presentationTimeOffset, so we should set the offset
         // if it has changed after switching the quality or updating an mpd
         if (buffer && buffer.timestampOffset !== MSETimeOffset && !isNaN(MSETimeOffset)) {
             buffer.timestampOffset = MSETimeOffset;
         }
     }
 
+    function getStreamId() {
+        return streamProcessor.getStreamInfo().id;
+    }
+
+    function removeOldTrackData() {
+        var allAppendedChunks = virtualBuffer.getChunks({ streamId: getStreamId(), mediaType: type, segmentType: HTTPRequest.MEDIA_SEGMENT_TYPE, appended: true });
+
+        const customTimeRangesFactory = CustomTimeRanges(context);
+        var rangesToClear = customTimeRangesFactory.create();
+        var rangesToLeave = customTimeRangesFactory.create();
+
+        var currentTime = playbackController.getTime();
+        var safeBufferLength = streamProcessor.getCurrentRepresentationInfo().fragmentDuration * 2;
+
+        var currentTrackBufferLength,
+            ranges,
+            range;
+
+        allAppendedChunks.forEach(function (chunk) {
+            ranges = mediaController.isCurrentTrack(chunk.mediaInfo) ? rangesToLeave : rangesToClear;
+            ranges.add(chunk.bufferedRange.start, chunk.bufferedRange.end);
+        });
+
+        if ((rangesToClear.length === 0) || (rangesToLeave.length === 0)) return;
+
+        currentTrackBufferLength = sourceBufferController.getBufferLength({buffered: rangesToLeave}, currentTime);
+
+        if (currentTrackBufferLength < safeBufferLength) return;
+
+        for (var i = 0, ln = rangesToClear.length; i < ln; i++) {
+            range = {start: rangesToClear.start(i), end: rangesToClear.end(i)};
+            if (mediaController.getSwitchMode(type) === MediaController.TRACK_SWITCH_MODE_ALWAYS_REPLACE || range.start > currentTime) {
+                clearBuffer(range);
+            }
+        }
+    }
+
     function onDataUpdateCompleted(e) {
-        if (e.sender.getStreamProcessor() !== streamProcessor || e.error) return;
+        if (e.sender.getStreamProcessor() !== streamProcessor) return;
+        if (e.error) return;
+
         updateBufferTimestampOffset(e.currentRepresentation.MSETimeOffset);
     }
 
@@ -410,16 +611,38 @@ function BufferController(config) {
         checkIfBufferingCompleted();
     }
 
+    function onChunkAppended(e) {
+        if (e.sender !== virtualBuffer) return;
+        addBufferMetrics();
+    }
+
     function onCurrentTrackChanged(e) {
         if (!buffer || (e.newMediaInfo.type !== type) || (e.newMediaInfo.streamInfo.id !== streamProcessor.getStreamInfo().id)) return;
-        if (mediaController.getSwitchMode(type) === MediaController.TRACK_SWITCH_MODE_ALWAYS_REPLACE) {
-            clearBuffer(getClearRange(0));
+
+        var newMediaInfo = e.newMediaInfo;
+        var mediaType = newMediaInfo.type;
+        var switchMode = e.switchMode;
+        var currentTime = playbackController.getTime();
+        var range = { start: 0, end: currentTime };
+
+        if (type !== mediaType) return;
+
+        switch (switchMode) {
+            case MediaController.TRACK_SWITCH_MODE_ALWAYS_REPLACE:
+                clearBuffer(range);
+                break;
+            case MediaController.TRACK_SWITCH_MODE_NEVER_REPLACE:
+                break;
+            default:
+                log('track switch mode is not supported: ' + switchMode);
         }
     }
 
     function onWallclockTimeUpdated() {
+        var secondsElapsed;
+        //constantly prune buffer every x seconds
         wallclockTicked++;
-        const secondsElapsed = (wallclockTicked * (mediaPlayerModel.getWallclockTimeUpdateInterval() / 1000));
+        secondsElapsed = (wallclockTicked * (mediaPlayerModel.getWallclockTimeUpdateInterval() / 1000));
         if ((secondsElapsed >= mediaPlayerModel.getBufferPruningInterval()) && !isAppendingInProgress) {
             wallclockTicked = 0;
             pruneBuffer();
@@ -438,8 +661,8 @@ function BufferController(config) {
         return streamProcessor;
     }
 
-    function setSeekStartTime(value) {
-        seekStartTime = value;
+    function setStreamProcessor(value) {
+        streamProcessor = value;
     }
 
     function getBuffer() {
@@ -454,6 +677,10 @@ function BufferController(config) {
         return bufferLevel;
     }
 
+    function getCriticalBufferLevel() {
+        return criticalBufferLevel;
+    }
+
     function setMediaSource(value) {
         mediaSource = value;
     }
@@ -466,10 +693,14 @@ function BufferController(config) {
         return isBufferingCompleted;
     }
 
+    function getIsAppendingInProgress() {
+        return isAppendingInProgress;
+    }
+
     function reset(errored) {
 
         eventBus.off(Events.DATA_UPDATE_COMPLETED, onDataUpdateCompleted, this);
-        eventBus.off(Events.QUALITY_CHANGE_REQUESTED, onQualityChanged, this);
+        eventBus.off(Events.QUALITY_CHANGED, onQualityChanged, this);
         eventBus.off(Events.INIT_FRAGMENT_LOADED, onInitFragmentLoaded, this);
         eventBus.off(Events.MEDIA_FRAGMENT_LOADED, onMediaFragmentLoaded, this);
         eventBus.off(Events.STREAM_COMPLETED, onStreamCompleted, this);
@@ -481,17 +712,27 @@ function BufferController(config) {
         eventBus.off(Events.WALLCLOCK_TIME_UPDATED, onWallclockTimeUpdated, this);
         eventBus.off(Events.SOURCEBUFFER_APPEND_COMPLETED, onAppended, this);
         eventBus.off(Events.SOURCEBUFFER_REMOVE_COMPLETED, onRemoved, this);
+        eventBus.off(Events.CHUNK_APPENDED, onChunkAppended, this);
+
+        clearTimeout(clearBufferTimeout);
+        clearBufferTimeout = null;
 
         criticalBufferLevel = Number.POSITIVE_INFINITY;
         bufferState = BUFFER_EMPTY;
-        requiredQuality = AbrController.QUALITY_DEFAULT;
-        lastIndex = Number.POSITIVE_INFINITY;
-        maxAppendedIndex = 0;
+        currentQuality = -1;
+        lastIndex = -1;
+        maxAppendedIndex = -1;
+        requiredQuality = 0;
         appendedBytesInfo = null;
         appendingMediaChunk = false;
         isBufferingCompleted = false;
         isAppendingInProgress = false;
         isPruningInProgress = false;
+        playbackController = null;
+        streamProcessor = null;
+        abrController = null;
+        fragmentController = null;
+        scheduleController = null;
 
         if (!errored) {
             sourceBufferController.abort(mediaSource, buffer);
@@ -506,24 +747,25 @@ function BufferController(config) {
         createBuffer: createBuffer,
         getType: getType,
         getStreamProcessor: getStreamProcessor,
-        setSeekStartTime: setSeekStartTime,
+        setStreamProcessor: setStreamProcessor,
         getBuffer: getBuffer,
         setBuffer: setBuffer,
         getBufferLevel: getBufferLevel,
+        getCriticalBufferLevel: getCriticalBufferLevel,
         setMediaSource: setMediaSource,
         getMediaSource: getMediaSource,
         getIsBufferingCompleted: getIsBufferingCompleted,
-        switchInitData: switchInitData,
+        getIsAppendingInProgress: getIsAppendingInProgress,
         reset: reset
     };
 
     setup();
+
     return instance;
 }
 
 BufferController.__dashjs_factory_name = 'BufferController';
-const factory = FactoryMaker.getClassFactory(BufferController);
+let factory = FactoryMaker.getClassFactory(BufferController);
 factory.BUFFER_LOADED = BUFFER_LOADED;
 factory.BUFFER_EMPTY = BUFFER_EMPTY;
-FactoryMaker.updateClassFactory(BufferController.__dashjs_factory_name, factory);
 export default factory;

@@ -30,7 +30,7 @@
  */
 import XHRLoader from './XHRLoader';
 import HeadRequest from './vo/HeadRequest';
-import DashJSError from './vo/DashJSError';
+import Error from './vo/Error';
 import EventBus from './../core/EventBus';
 import Events from './../core/events/Events';
 import FactoryMaker from '../core/FactoryMaker';
@@ -51,7 +51,6 @@ function FragmentLoader(config) {
         xhrLoader = XHRLoader(context).create({
             errHandler: config.errHandler,
             metricsModel: config.metricsModel,
-            mediaPlayerModel: config.mediaPlayerModel,
             requestModifier: config.requestModifier
         });
     }
@@ -107,7 +106,7 @@ function FragmentLoader(config) {
                 error: function (xhr, statusText, errorText) {
                     report(
                         undefined,
-                        new DashJSError(
+                        new Error(
                             FRAGMENT_LOADER_ERROR_LOADING_FAILURE,
                             errorText,
                             statusText
@@ -118,7 +117,7 @@ function FragmentLoader(config) {
         } else {
             report(
                 undefined,
-                new DashJSError(
+                new Error(
                     FRAGMENT_LOADER_ERROR_NULL_REQUEST,
                     FRAGMENT_LOADER_MESSAGE_NULL_REQUEST
                 )
@@ -156,5 +155,4 @@ FragmentLoader.__dashjs_factory_name = 'FragmentLoader';
 const factory = FactoryMaker.getClassFactory(FragmentLoader);
 factory.FRAGMENT_LOADER_ERROR_LOADING_FAILURE = FRAGMENT_LOADER_ERROR_LOADING_FAILURE;
 factory.FRAGMENT_LOADER_ERROR_NULL_REQUEST = FRAGMENT_LOADER_ERROR_NULL_REQUEST;
-FactoryMaker.updateClassFactory(FragmentLoader.__dashjs_factory_name, factory);
 export default factory;

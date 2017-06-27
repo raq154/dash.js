@@ -29,7 +29,6 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  */
 
-import MetricsConstants from '../../../constants/MetricsConstants';
 import FactoryMaker from '../../../../core/FactoryMaker';
 import HandlerHelpers from '../../utils/HandlerHelpers';
 
@@ -91,7 +90,7 @@ function HttpListHandler() {
     }
 
     function handleNewMetric(metric, vo) {
-        if (metric === MetricsConstants.HTTP_REQUEST) {
+        if (metric === 'HttpList') {
             if (!type || (type === vo.type)) {
                 storedVos.push(vo);
             }

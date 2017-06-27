@@ -29,24 +29,24 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  */
 import {HTTPRequest} from '../streaming/vo/metrics/HTTPRequest';
+import AbrController from '../streaming/controllers/AbrController';
+import ManifestModel from '../streaming/models/ManifestModel';
+import DashManifestModel from './models/DashManifestModel';
 import FactoryMaker from '../core/FactoryMaker';
-import MetricsConstants from '../streaming/constants/MetricsConstants';
-import { round10 } from 'round10';
 
 /**
  * @module DashMetrics
- * @param {object} config configuration passed to DashMetrics
  */
-function DashMetrics(config) {
+function DashMetrics() {
 
     let instance;
-    let dashManifestModel = config.dashManifestModel;
-    let manifestModel = config.manifestModel;
+    let context = this.context;
+    let manifestModel = ManifestModel(context).getInstance();//TODO Need to pass this in not bake in
 
     function getBandwidthForRepresentation(representationId, periodId) {
-        let representation;
-        const manifest = manifestModel.getValue();
-        let period = manifest.Period_asArray[periodId];
+        var representation;
+        var manifest = manifestModel.getValue();
+        var period = manifest.Period_asArray[periodId];
 
         representation = findRepresentation(period, representationId);
 
@@ -65,9 +65,9 @@ function DashMetrics(config) {
      * @returns {*}
      */
     function getIndexForRepresentation(representationId, periodIdx) {
-        let representationIndex;
-        const manifest = manifestModel.getValue();
-        let period = manifest.Period_asArray[periodIdx];
+        var representationIndex;
+        var manifest = manifestModel.getValue();
+        var period = manifest.Period_asArray[periodIdx];
 
         representationIndex = findRepresentationIndex(period, representationId);
         return representationIndex;
@@ -83,12 +83,35 @@ function DashMetrics(config) {
      * @instance
      */
     function getMaxIndexForBufferType(bufferType, periodIdx) {
-        let maxIndex;
-        const manifest = manifestModel.getValue();
-        let period = manifest.Period_asArray[periodIdx];
+        var maxIndex;
+        var manifest = manifestModel.getValue();
+        var period = manifest.Period_asArray[periodIdx];
 
         maxIndex = findMaxBufferIndex(period, bufferType);
         return maxIndex;
+    }
+
+    /**
+     * This method returns the current max index correlated to the max allowed bitrate
+     * explicitly set via the MediaPlayer's API setMaxAllowedBitrateFor.
+     *
+     * @param {string} bufferType - String 'audio' or 'video',
+     * @param {number} periodId - Make sure this is the period id not index.
+     * @return {number}
+     * @see {@link module:MediaPlayer#setMaxAllowedBitrateFor setMaxAllowedBitrateFor()}
+     * @see {@link DashMetrics#getMaxIndexForBufferType getMaxIndexForBufferType()}
+     * @memberof module:DashMetrics
+     * @instance
+     */
+    function getMaxAllowedIndexForBufferType(bufferType, periodId) {
+        var idx = 0;
+        var abrController = AbrController(context).getInstance();
+
+        if (abrController) {
+            idx = abrController.getTopQualityIndexFor(bufferType, periodId);
+        }
+
+        return idx;
     }
 
     /**
@@ -98,7 +121,24 @@ function DashMetrics(config) {
      * @instance
      */
     function getCurrentRepresentationSwitch(metrics) {
-        return getCurrent(metrics, MetricsConstants.TRACK_SWITCH);
+        if (metrics === null) {
+            return null;
+        }
+
+        var repSwitch = metrics.RepSwitchList;
+        var repSwitchLength,
+            repSwitchLastIndex,
+            currentRepSwitch;
+
+        if (repSwitch === null || repSwitch.length <= 0) {
+            return null;
+        }
+
+        repSwitchLength = repSwitch.length;
+        repSwitchLastIndex = repSwitchLength - 1;
+
+        currentRepSwitch = repSwitch[repSwitchLastIndex];
+        return currentRepSwitch;
     }
 
     /**
@@ -108,7 +148,16 @@ function DashMetrics(config) {
      * @instance
      */
     function getLatestBufferLevelVO(metrics) {
-        return getCurrent(metrics, MetricsConstants.BUFFER_LEVEL);
+        if (metrics === null) {
+            return null;
+        }
+
+        var bufferLevel = metrics.BufferLevel;
+        if (bufferLevel === null || bufferLevel.length <= 0) {
+            return null;
+        }
+
+        return bufferLevel[bufferLevel.length - 1];
     }
 
     /**
@@ -118,13 +167,16 @@ function DashMetrics(config) {
      * @instance
      */
     function getCurrentBufferLevel(metrics) {
-        const vo = getLatestBufferLevelVO(metrics);
-
-        if (vo) {
-            return round10(vo.level / 1000, -3);
+        if (metrics === null) {
+            return 0;
         }
 
-        return 0;
+        var bufferLevel = metrics.BufferLevel;
+        if (bufferLevel === null || bufferLevel.length <= 0) {
+            return 0;
+        }
+
+        return bufferLevel[bufferLevel.length - 1].level / 1000;
     }
 
     /**
@@ -134,7 +186,7 @@ function DashMetrics(config) {
      * @instance
      */
     function getRequestsQueue(metrics) {
-        return metrics ? metrics.RequestsQueue : null;
+        return metrics.RequestsQueue;
     }
 
     /**
@@ -144,17 +196,17 @@ function DashMetrics(config) {
      * @instance
      */
     function getCurrentHttpRequest(metrics) {
-        if (!metrics) {
+        if (metrics === null) {
             return null;
         }
 
-        const httpList = metrics.HttpList;
-        let currentHttpList = null;
+        var httpList = metrics.HttpList;
+        var currentHttpList = null;
 
-        let httpListLength,
+        var httpListLength,
             httpListLastIndex;
 
-        if (!httpList || httpList.length <= 0) {
+        if (httpList === null || httpList.length <= 0) {
             return null;
         }
 
@@ -178,38 +230,11 @@ function DashMetrics(config) {
      * @instance
      */
     function getHttpRequests(metrics) {
-        if (!metrics) {
+        if (metrics === null) {
             return [];
         }
 
         return !!metrics.HttpList ? metrics.HttpList : [];
-    }
-
-    /**
-     * @param {MetricsList} metrics
-     * @param {string} metricName
-     * @returns {*}
-     * @memberof module:DashMetrics
-     * @instance
-     */
-    function getCurrent(metrics, metricName) {
-        if (!metrics) {
-            return null;
-        }
-
-        const list = metrics[metricName];
-
-        if (!list) {
-            return null;
-        }
-
-        const length = list.length;
-
-        if (length <= 0) {
-            return null;
-        }
-
-        return list[length - 1];
     }
 
     /**
@@ -219,7 +244,22 @@ function DashMetrics(config) {
      * @instance
      */
     function getCurrentDroppedFrames(metrics) {
-        return getCurrent(metrics, MetricsConstants.DROPPED_FRAMES);
+        if (metrics === null) { return null; }
+
+        var droppedFrames = metrics.DroppedFrames;
+        var droppedFramesLength,
+            droppedFramesLastIndex,
+            currentDroppedFrames;
+
+        if (droppedFrames === null || droppedFrames.length <= 0) {
+            return null;
+        }
+
+        droppedFramesLength = droppedFrames.length;
+        droppedFramesLastIndex = droppedFramesLength - 1;
+        currentDroppedFrames = droppedFrames[droppedFramesLastIndex];
+
+        return currentDroppedFrames;
     }
 
     /**
@@ -229,7 +269,23 @@ function DashMetrics(config) {
      * @instance
      */
     function getCurrentSchedulingInfo(metrics) {
-        return getCurrent(metrics, MetricsConstants.SCHEDULING_INFO);
+        if (metrics === null) return null;
+
+        var schedulingInfo = metrics.SchedulingInfo;
+        var ln,
+            lastIdx,
+            currentSchedulingInfo;
+
+        if (schedulingInfo === null || schedulingInfo.length <= 0) {
+            return null;
+        }
+
+        ln = schedulingInfo.length;
+        lastIdx = ln - 1;
+
+        currentSchedulingInfo = schedulingInfo[lastIdx];
+
+        return currentSchedulingInfo;
     }
 
     /**
@@ -239,7 +295,23 @@ function DashMetrics(config) {
      * @instance
      */
     function getCurrentManifestUpdate(metrics) {
-        return getCurrent(metrics, MetricsConstants.MANIFEST_UPDATE);
+        if (metrics === null) return null;
+
+        var manifestUpdate = metrics.ManifestUpdate;
+        var ln,
+            lastIdx,
+            currentManifestUpdate;
+
+        if (manifestUpdate === null || manifestUpdate.length <= 0) {
+            return null;
+        }
+
+        ln = manifestUpdate.length;
+        lastIdx = ln - 1;
+
+        currentManifestUpdate = manifestUpdate[lastIdx];
+
+        return currentManifestUpdate;
     }
 
     /**
@@ -249,7 +321,23 @@ function DashMetrics(config) {
      * @instance
      */
     function getCurrentDVRInfo(metrics) {
-        return getCurrent(metrics, MetricsConstants.DVR_INFO);
+
+        if (metrics === null) {
+            return null;
+        }
+
+        var dvrInfo = metrics.DVRInfo;
+        var dvrInfoLastIndex,
+            currentDVRInfo;
+
+        if (dvrInfo === null || dvrInfo.length <= 0) {
+            return null;
+        }
+
+        dvrInfoLastIndex = dvrInfo.length - 1;
+        currentDVRInfo = dvrInfo[dvrInfoLastIndex];
+
+        return currentDVRInfo;
     }
 
     /**
@@ -260,10 +348,14 @@ function DashMetrics(config) {
      * @instance
      */
     function getLatestMPDRequestHeaderValueByID(metrics, id) {
-        let headers = {};
-        let httpRequestList,
+        var headers = {};
+        var httpRequestList,
             httpRequest,
             i;
+
+        if (metrics === null) {
+            return null;
+        }
 
         httpRequestList = getHttpRequests(metrics);
 
@@ -287,26 +379,27 @@ function DashMetrics(config) {
      * @instance
      */
     function getLatestFragmentRequestHeaderValueByID(metrics, id) {
-        let headers = {};
-        let httpRequest = getCurrentHttpRequest(metrics);
-        if (httpRequest) {
-            headers = parseResponseHeaders(httpRequest._responseHeaders);
-        }
+
+        if (metrics === null) return null;
+
+        var httpRequest = getCurrentHttpRequest(metrics);
+        var headers;
+
+        if (httpRequest === null || httpRequest._responseHeaders === null) return null;
+
+        headers = parseResponseHeaders(httpRequest._responseHeaders);
         return headers[id] === undefined ? null :  headers[id];
     }
 
     function parseResponseHeaders(headerStr) {
-        let headers = {};
+        var headers = {};
         if (!headerStr) {
             return headers;
         }
-
-        // Trim headerStr to fix a MS Edge bug with xhr.getAllResponseHeaders method
-        // which send a string starting with a "\n" character
-        let headerPairs = headerStr.trim().split('\u000d\u000a');
-        for (let i = 0, ilen = headerPairs.length; i < ilen; i++) {
-            let headerPair = headerPairs[i];
-            let index = headerPair.indexOf('\u003a\u0020');
+        var headerPairs = headerStr.split('\u000d\u000a');
+        for (var i = 0, ilen = headerPairs.length; i < ilen; i++) {
+            var headerPair = headerPairs[i];
+            var index = headerPair.indexOf('\u003a\u0020');
             if (index > 0) {
                 headers[headerPair.substring(0, index)] = headerPair.substring(index + 2);
             }
@@ -315,37 +408,44 @@ function DashMetrics(config) {
     }
 
     function findRepresentationIndex(period, representationId) {
-        const index = findRepresentation(period, representationId, true);
-
-        if (index !== null) {
-            return index;
-        }
-
-        return -1;
-    }
-
-    function findRepresentation(period, representationId, returnIndex) {
-        let adaptationSet,
+        var adaptationSet,
             adaptationSetArray,
             representation,
             representationArray,
             adaptationSetArrayIndex,
             representationArrayIndex;
 
-        if (period) {
-            adaptationSetArray = period.AdaptationSet_asArray;
-            for (adaptationSetArrayIndex = 0; adaptationSetArrayIndex < adaptationSetArray.length; adaptationSetArrayIndex = adaptationSetArrayIndex + 1) {
-                adaptationSet = adaptationSetArray[adaptationSetArrayIndex];
-                representationArray = adaptationSet.Representation_asArray;
-                for (representationArrayIndex = 0; representationArrayIndex < representationArray.length; representationArrayIndex = representationArrayIndex + 1) {
-                    representation = representationArray[representationArrayIndex];
-                    if (representationId === representation.id) {
-                        if (returnIndex) {
-                            return representationArrayIndex;
-                        } else {
-                            return representation;
-                        }
-                    }
+        adaptationSetArray = period.AdaptationSet_asArray;
+        for (adaptationSetArrayIndex = 0; adaptationSetArrayIndex < adaptationSetArray.length; adaptationSetArrayIndex = adaptationSetArrayIndex + 1) {
+            adaptationSet = adaptationSetArray[adaptationSetArrayIndex];
+            representationArray = adaptationSet.Representation_asArray;
+            for (representationArrayIndex = 0; representationArrayIndex < representationArray.length; representationArrayIndex = representationArrayIndex + 1) {
+                representation = representationArray[representationArrayIndex];
+                if (representationId === representation.id) {
+                    return representationArrayIndex;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    function findRepresentation(period, representationId) {
+        var adaptationSet,
+            adaptationSetArray,
+            representation,
+            representationArray,
+            adaptationSetArrayIndex,
+            representationArrayIndex;
+
+        adaptationSetArray = period.AdaptationSet_asArray;
+        for (adaptationSetArrayIndex = 0; adaptationSetArrayIndex < adaptationSetArray.length; adaptationSetArrayIndex = adaptationSetArrayIndex + 1) {
+            adaptationSet = adaptationSetArray[adaptationSetArrayIndex];
+            representationArray = adaptationSet.Representation_asArray;
+            for (representationArrayIndex = 0; representationArrayIndex < representationArray.length; representationArrayIndex = representationArrayIndex + 1) {
+                representation = representationArray[representationArrayIndex];
+                if (representationId === representation.id) {
+                    return representation;
                 }
             }
         }
@@ -354,11 +454,11 @@ function DashMetrics(config) {
     }
 
     function adaptationIsType(adaptation, bufferType) {
-        return dashManifestModel.getIsTypeOf(adaptation, bufferType);
+        return DashManifestModel(context).getInstance().getIsTypeOf(adaptation, bufferType);
     }
 
     function findMaxBufferIndex(period, bufferType) {
-        let adaptationSet,
+        var adaptationSet,
             adaptationSetArray,
             representationArray,
             adaptationSetArrayIndex;
@@ -381,6 +481,7 @@ function DashMetrics(config) {
         getBandwidthForRepresentation: getBandwidthForRepresentation,
         getIndexForRepresentation: getIndexForRepresentation,
         getMaxIndexForBufferType: getMaxIndexForBufferType,
+        getMaxAllowedIndexForBufferType: getMaxAllowedIndexForBufferType,
         getCurrentRepresentationSwitch: getCurrentRepresentationSwitch,
         getLatestBufferLevelVO: getLatestBufferLevelVO,
         getCurrentBufferLevel: getCurrentBufferLevel,

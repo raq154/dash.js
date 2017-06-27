@@ -76,7 +76,7 @@ function ProtectionModel_3Feb2014(config) {
 
     function reset() {
         try {
-            for (let i = 0; i < sessions.length; i++) {
+            for (var i = 0; i < sessions.length; i++) {
                 closeKeySession(sessions[i]);
             }
             if (videoElement) {
@@ -93,8 +93,8 @@ function ProtectionModel_3Feb2014(config) {
     }
 
     function getAllInitData() {
-        let retVal = [];
-        for (let i = 0; i < sessions.length; i++) {
+        var retVal = [];
+        for (var i = 0; i < sessions.length; i++) {
             retVal.push(sessions[i].initData);
         }
         return retVal;
@@ -104,23 +104,23 @@ function ProtectionModel_3Feb2014(config) {
 
         // Try key systems in order, first one with supported key system configuration
         // is used
-        let found = false;
-        for (let ksIdx = 0; ksIdx < ksConfigurations.length; ksIdx++) {
-            let systemString = ksConfigurations[ksIdx].ks.systemString;
-            let configs = ksConfigurations[ksIdx].configs;
-            let supportedAudio = null;
-            let supportedVideo = null;
+        var found = false;
+        for (var ksIdx = 0; ksIdx < ksConfigurations.length; ksIdx++) {
+            var systemString = ksConfigurations[ksIdx].ks.systemString;
+            var configs = ksConfigurations[ksIdx].configs;
+            var supportedAudio = null;
+            var supportedVideo = null;
 
             // Try key system configs in order, first one with supported audio/video
             // is used
-            for (let configIdx = 0; configIdx < configs.length; configIdx++) {
-                let audios = configs[configIdx].audioCapabilities;
-                let videos = configs[configIdx].videoCapabilities;
+            for (var configIdx = 0; configIdx < configs.length; configIdx++) {
+                var audios = configs[configIdx].audioCapabilities;
+                var videos = configs[configIdx].videoCapabilities;
 
                 // Look for supported audio container/codecs
                 if (audios && audios.length !== 0) {
                     supportedAudio = []; // Indicates that we have a requested audio config
-                    for (let audioIdx = 0; audioIdx < audios.length; audioIdx++) {
+                    for (var audioIdx = 0; audioIdx < audios.length; audioIdx++) {
                         if (window[api.MediaKeys].isTypeSupported(systemString, audios[audioIdx].contentType)) {
                             supportedAudio.push(audios[audioIdx]);
                         }
@@ -130,7 +130,7 @@ function ProtectionModel_3Feb2014(config) {
                 // Look for supported video container/codecs
                 if (videos && videos.length !== 0) {
                     supportedVideo = []; // Indicates that we have a requested video config
-                    for (let videoIdx = 0; videoIdx < videos.length; videoIdx++) {
+                    for (var videoIdx = 0; videoIdx < videos.length; videoIdx++) {
                         if (window[api.MediaKeys].isTypeSupported(systemString, videos[videoIdx].contentType)) {
                             supportedVideo.push(videos[videoIdx]);
                         }
@@ -147,8 +147,8 @@ function ProtectionModel_3Feb2014(config) {
 
                 // This configuration is supported
                 found = true;
-                let ksConfig = new KeySystemConfiguration(supportedAudio, supportedVideo);
-                let ks = protectionKeyController.getKeySystemBySystemString(systemString);
+                var ksConfig = new KeySystemConfiguration(supportedAudio, supportedVideo);
+                var ks = protectionKeyController.getKeySystemBySystemString(systemString);
                 eventBus.trigger(Events.KEY_SYSTEM_ACCESS_COMPLETE, {data: new KeySystemAccess(ks, ksConfig)});
                 break;
             }
@@ -202,7 +202,7 @@ function ProtectionModel_3Feb2014(config) {
         // TODO:  Not sure if there is a way to concatenate all capability data into a RFC6386-compatible format
 
         // If player is trying to playback Audio only stream - don't error out.
-        let capabilities = null;
+        var capabilities = null;
 
         if (keySystemAccess.ksConfiguration.videoCapabilities !== null && keySystemAccess.ksConfiguration.videoCapabilities.length > 0)
           capabilities = keySystemAccess.ksConfiguration.videoCapabilities[0];
@@ -213,9 +213,9 @@ function ProtectionModel_3Feb2014(config) {
         if (capabilities === null)
           throw new Error('Can not create sessions for unknown content types.');
 
-        let contentType = capabilities.contentType;
-        let session = mediaKeys.createSession(contentType, new Uint8Array(initData));
-        let sessionToken = createSessionToken(session, initData);
+        var contentType = capabilities.contentType;
+        var session = mediaKeys.createSession(contentType, new Uint8Array(initData));
+        var sessionToken = createSessionToken(session, initData);
 
         // Add all event listeners
         session.addEventListener(api.error, sessionToken);
@@ -231,7 +231,7 @@ function ProtectionModel_3Feb2014(config) {
 
     function updateKeySession(sessionToken, message) {
 
-        let session = sessionToken.session;
+        var session = sessionToken.session;
 
         if (!protectionKeyController.isClearKey(keySystem)) {
             // Send our request to the key session
@@ -250,7 +250,7 @@ function ProtectionModel_3Feb2014(config) {
      */
     function closeKeySession(sessionToken) {
 
-        let session = sessionToken.session;
+        var session = sessionToken.session;
 
         // Remove event listeners
         session.removeEventListener(api.error, sessionToken);
@@ -259,7 +259,7 @@ function ProtectionModel_3Feb2014(config) {
         session.removeEventListener(api.close, sessionToken);
 
         // Remove from our session list
-        for (let i = 0; i < sessions.length; i++) {
+        for (var i = 0; i < sessions.length; i++) {
             if (sessions[i] === sessionToken) {
                 sessions.splice(i,1);
                 break;
@@ -282,7 +282,7 @@ function ProtectionModel_3Feb2014(config) {
 
                     case api.needkey:
                         if (event.initData) {
-                            let initData = ArrayBuffer.isView(event.initData) ? event.initData.buffer : event.initData;
+                            var initData = ArrayBuffer.isView(event.initData) ? event.initData.buffer : event.initData;
                             eventBus.trigger(Events.NEED_KEY, {key: new NeedKey(initData, 'cenc')});
                         }
                         break;
@@ -296,8 +296,8 @@ function ProtectionModel_3Feb2014(config) {
     // readyState, so we need this logic to ensure we don't set the keys
     // too early
     function setMediaKeys() {
-        let boundDoSetKeys = null;
-        const doSetKeys = function () {
+        var boundDoSetKeys = null;
+        var doSetKeys = function () {
             videoElement.removeEventListener('loadedmetadata', boundDoSetKeys);
             videoElement[api.setMediaKeys](mediaKeys);
             eventBus.trigger(Events.VIDEO_ELEMENT_SELECTED);
@@ -337,11 +337,11 @@ function ProtectionModel_3Feb2014(config) {
                 switch (event.type) {
 
                     case api.error:
-                        let errorStr = 'KeyError'; // TODO: Make better string from event
+                        var errorStr = 'KeyError'; // TODO: Make better string from event
                         eventBus.trigger(Events.KEY_ERROR, { data: new KeyError(this, errorStr) });
                         break;
                     case api.message:
-                        let message = ArrayBuffer.isView(event.message) ? event.message.buffer : event.message;
+                        var message = ArrayBuffer.isView(event.message) ? event.message.buffer : event.message;
                         eventBus.trigger(Events.INTERNAL_KEY_MESSAGE, { data: new KeyMessage(this, message, event.destinationURL) });
                         break;
                     case api.ready:

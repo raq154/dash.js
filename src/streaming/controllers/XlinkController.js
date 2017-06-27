@@ -33,7 +33,6 @@ import EventBus from '../../core/EventBus';
 import Events from '../../core/events/Events';
 import FactoryMaker from '../../core/FactoryMaker';
 import X2JS from '../../../externals/xml2json';
-import URLUtils from '../utils/URLUtils';
 
 const RESOLVE_TYPE_ONLOAD = 'onLoad';
 const RESOLVE_TYPE_ONACTUATE = 'onActuate';
@@ -46,7 +45,6 @@ function XlinkController(config) {
 
     let context = this.context;
     let eventBus = EventBus(context).getInstance();
-    const urlUtils = URLUtils(context).getInstance();
 
     let instance,
         matchers,
@@ -61,7 +59,6 @@ function XlinkController(config) {
         xlinkLoader = XlinkLoader(context).create({
             errHandler: config.errHandler,
             metricsModel: config.metricsModel,
-            mediaPlayerModel: config.mediaPlayerModel,
             requestModifier: config.requestModifier
         });
     }
@@ -79,19 +76,9 @@ function XlinkController(config) {
      * @param {Object} mpd - the manifest
      */
     function resolveManifestOnLoad(mpd) {
-        let elements;
+        var elements;
         // First resolve all periods, so unnecessary requests inside onLoad Periods with Default content are avoided
-        converter = new X2JS({
-            escapeMode:         false,
-            attributePrefix:    '',
-            arrayAccessForm:    'property',
-            emptyNodeForm:      'object',
-            stripWhitespaces:   false,
-            enableToStringFunc: false,
-            ignoreRoot:         true,
-            matchers:           matchers
-        });
-
+        converter = new X2JS(matchers, '', true);
         manifest = mpd;
         elements = getElementsToResolve(manifest.Period_asArray, manifest, ELEMENT_TYPE_PERIOD, RESOLVE_TYPE_ONLOAD);
         resolve(elements, ELEMENT_TYPE_PERIOD, RESOLVE_TYPE_ONLOAD);
@@ -107,9 +94,10 @@ function XlinkController(config) {
     }
 
     function resolve(elements, type, resolveType) {
-        let resolveObject = {};
-        let element,
-            url;
+        var resolveObject = {};
+        var element,
+            url,
+            i;
 
         resolveObject.elements = elements;
         resolveObject.type = type;
@@ -118,9 +106,9 @@ function XlinkController(config) {
         if (resolveObject.elements.length === 0) {
             onXlinkAllElementsLoaded(resolveObject);
         }
-        for (let i = 0; i < resolveObject.elements.length; i++) {
+        for (i = 0; i < resolveObject.elements.length; i++) {
             element = resolveObject.elements[i];
-            if (urlUtils.isHTTPURL(element.url)) {
+            if (element.url.indexOf('http://') !== -1) {
                 url = element.url;
             } else {
                 url = element.originalContent.BaseURL + element.url;
@@ -130,13 +118,13 @@ function XlinkController(config) {
     }
 
     function onXlinkElementLoaded(event) {
-        let element,
+        var element,
             resolveObject,
             index;
 
-        const openingTag = '<response>';
-        const closingTag = '</response>';
-        let mergedContent = '';
+        var openingTag = '<response>';
+        var closingTag = '</response>';
+        var mergedContent = '';
 
         element = event.element;
         resolveObject = event.resolveObject;
@@ -154,8 +142,8 @@ function XlinkController(config) {
 
     // We got to wait till all elements of the current queue are resolved before merging back
     function onXlinkAllElementsLoaded (resolveObject) {
-        let elements = [];
-        let i,
+        var elements = [];
+        var i,
             obj;
 
         mergeElementsBack(resolveObject);
@@ -187,8 +175,8 @@ function XlinkController(config) {
 
     // Returns the elements with the specific resolve Type
     function getElementsToResolve(elements, parentElement, type, resolveType) {
-        let toResolve = [];
-        let element,
+        var toResolve = [];
+        var element,
             i,
             xlinkObject;
         // first remove all the resolve-to-zero elements
@@ -210,8 +198,8 @@ function XlinkController(config) {
     }
 
     function mergeElementsBack(resolveObject) {
-        let resolvedElements = [];
-        let element,
+        var resolvedElements = [];
+        var element,
             type,
             obj,
             i,
@@ -263,7 +251,7 @@ function XlinkController(config) {
 
     // Check if all pending requests are finished
     function isResolvingFinished(elementsToResolve) {
-        let i,
+        var i,
             obj;
         for (i = 0; i < elementsToResolve.elements.length; i++) {
             obj = elementsToResolve.elements[i];

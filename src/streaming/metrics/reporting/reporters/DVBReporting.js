@@ -28,7 +28,6 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import MetricsConstants from '../../../constants/MetricsConstants';
 import FactoryMaker from '../../../../core/FactoryMaker';
 import MetricSerialiser from '../../utils/MetricSerialiser';
 import RNG from '../../utils/RNG';
@@ -49,9 +48,9 @@ function DVBReporting() {
     let pendingRequests = [];
 
     function doGetRequest(url, successCB, failureCB) {
-        let req = new XMLHttpRequest();
-        const oncomplete = function () {
-            let reqIndex = pendingRequests.indexOf(req);
+        var req = new XMLHttpRequest();
+        var oncomplete = function () {
+            var reqIndex = pendingRequests.indexOf(req);
 
             if (reqIndex === -1) {
                 return;
@@ -96,10 +95,10 @@ function DVBReporting() {
             // This reporting mechanism operates by creating one HTTP GET
             // request for every entry in the top level list of the metric.
             vos.forEach(function (vo) {
-                let url = metricSerialiser.serialise(vo);
+                var url = metricSerialiser.serialise(vo);
 
                 // this has been proposed for errata
-                if (USE_DRAFT_DVB_SPEC && (type !== MetricsConstants.DVB_ERRORS)) {
+                if (USE_DRAFT_DVB_SPEC && (type !== 'DVBErrors')) {
                     url = `metricname=${type}&${url}`;
                 }
 
@@ -124,7 +123,7 @@ function DVBReporting() {
     }
 
     function initialize(entry, rc) {
-        let probability;
+        var probability;
 
         rangeController = rc;
 

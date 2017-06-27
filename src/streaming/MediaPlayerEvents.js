@@ -38,54 +38,32 @@ class MediaPlayerEvents extends EventsBase {
     /**
      * @description Public facing external events to be used when developing a player that implements dash.js.
      */
-    constructor() {
+    constructor () {
         super();
-        /**
-         * Triggered when playback will not start yet
-         * as the MPD's availabilityStartTime is in the future.
-         * Check delay property in payload to determine time before playback will start.
-         */
-        this.AST_IN_FUTURE = 'astInFuture';
         /**
          * Triggered when the video element's buffer state changes to stalled.
          * Check mediaType in payload to determine type (Video, Audio, FragmentedText).
          * @event MediaPlayerEvents#BUFFER_EMPTY
          */
-        this.BUFFER_EMPTY = 'bufferStalled';
+        this.BUFFER_EMPTY = 'bufferstalled';
         /**
          * Triggered when the video element's buffer state changes to loaded.
          * Check mediaType in payload to determine type (Video, Audio, FragmentedText).
          * @event MediaPlayerEvents#BUFFER_LOADED
          */
-        this.BUFFER_LOADED = 'bufferLoaded';
+        this.BUFFER_LOADED = 'bufferloaded';
 
         /**
          * Triggered when the video element's buffer state changes, either stalled or loaded. Check payload for state.
-         * @event MediaPlayerEvents#BUFFER_LEVEL_STATE_CHANGED
+         * @event MediaPlayerEvents#BUFFER_LOADED
          */
         this.BUFFER_LEVEL_STATE_CHANGED = 'bufferStateChanged';
 
         /**
-         * Triggered when there is an error from the element or MSE source buffer.
+         * Triggered when
          * @event MediaPlayerEvents#ERROR
          */
         this.ERROR = 'error';
-
-        /**
-         * Triggered when a fragment download has completed.
-         * @event MediaPlayerEvents#FRAGMENT_LOADING_COMPLETED
-         */
-        this.FRAGMENT_LOADING_COMPLETED = 'fragmentLoadingCompleted';
-        /**
-         * Triggered when a fragment download has started.
-         * @event MediaPlayerEvents#FRAGMENT_LOADING_STARTED
-         */
-        this.FRAGMENT_LOADING_STARTED = 'fragmentLoadingStarted';
-        /**
-         * Triggered when a fragment download is abandoned due to detection of slow download base on the ABR abandon rule..
-         * @event MediaPlayerEvents#FRAGMENT_LOADING_ABANDONED
-         */
-        this.FRAGMENT_LOADING_ABANDONED = 'fragmentLoadingAbandoned';
         /**
          * Triggered when {@link module:Debug} log method is called.
          * @event MediaPlayerEvents#LOG
@@ -96,72 +74,52 @@ class MediaPlayerEvents extends EventsBase {
          * Triggered when the manifest load is complete
          * @event MediaPlayerEvents#MANIFEST_LOADED
          */
-        this.MANIFEST_LOADED = 'manifestLoaded';
+        this.MANIFEST_LOADED = 'manifestloaded';
         /**
          * Triggered anytime there is a change to the overall metrics.
          * @event MediaPlayerEvents#METRICS_CHANGED
          */
-        this.METRICS_CHANGED = 'metricsChanged';
+        this.METRICS_CHANGED = 'metricschanged';
         /**
          * Triggered when an individual metric is added, updated or cleared.
          * @event MediaPlayerEvents#METRIC_CHANGED
          */
-        this.METRIC_CHANGED = 'metricChanged';
+        this.METRIC_CHANGED = 'metricchanged';
         /**
          * Triggered every time a new metric is added.
          * @event MediaPlayerEvents#METRIC_ADDED
          */
-        this.METRIC_ADDED = 'metricAdded';
+        this.METRIC_ADDED = 'metricadded';
         /**
          * Triggered every time a metric is updated.
          * @event MediaPlayerEvents#METRIC_UPDATED
          */
-        this.METRIC_UPDATED = 'metricUpdated';
+        this.METRIC_UPDATED = 'metricupdated';
         /**
          * Triggered at the stream end of a period.
          * @event MediaPlayerEvents#PERIOD_SWITCH_COMPLETED
          */
-        this.PERIOD_SWITCH_COMPLETED = 'periodSwitchCompleted';
+        this.PERIOD_SWITCH_COMPLETED = 'streamswitchcompleted';
         /**
          * Triggered when a new period starts.
          * @event MediaPlayerEvents#PERIOD_SWITCH_STARTED
          */
-        this.PERIOD_SWITCH_STARTED = 'periodSwitchStarted';
-
-        /**
-         * Triggered when an ABR up /down switch is initialed; either by user in manual mode or auto mode via ABR rules.
-         * @event MediaPlayerEvents#QUALITY_CHANGE_REQUESTED
-         */
-        this.QUALITY_CHANGE_REQUESTED = 'qualityChangeRequested';
-
-        /**
-         * Triggered when the new ABR quality is being rendered on-screen.
-         * @event MediaPlayerEvents#QUALITY_CHANGE_RENDERED
-         */
-        this.QUALITY_CHANGE_RENDERED = 'qualityChangeRendered';
-
+        this.PERIOD_SWITCH_STARTED = 'streamswitchstarted';
         /**
          * Triggered when the stream is setup and ready.
          * @event MediaPlayerEvents#STREAM_INITIALIZED
          */
-        this.STREAM_INITIALIZED = 'streamInitialized';
-
-        /**
-         * Triggered when the player has been reset.
-         * @event MediaPlayerEvents#STREAM_TEARDOWN_COMPLETE
-         */
-        this.STREAM_TEARDOWN_COMPLETE = 'streamTeardownComplete';
-
+        this.STREAM_INITIALIZED = 'streaminitialized';
         /**
          * Triggered once all text tracks detected in the MPD are added to the video element.
          * @event MediaPlayerEvents#TEXT_TRACKS_ADDED
          */
-        this.TEXT_TRACKS_ADDED = 'allTextTracksAdded';
+        this.TEXT_TRACKS_ADDED = 'alltexttracksadded';
         /**
          * Triggered when a text track is added to the video element's TextTrackList
          * @event MediaPlayerEvents#TEXT_TRACK_ADDED
          */
-        this.TEXT_TRACK_ADDED = 'textTrackAdded';
+        this.TEXT_TRACK_ADDED = 'texttrackadded';
 
         /**
          * Sent when enough data is available that the media can be played,
@@ -183,11 +141,6 @@ class MediaPlayerEvents extends EventsBase {
          * @event MediaPlayerEvents#PLAYBACK_ERROR
          */
         this.PLAYBACK_ERROR = 'playbackError';
-        /**
-         * Sent when playback is not allowed (for example if user gesture is needed).
-         * @event MediaPlayerEvents#PLAYBACK_NOT_ALLOWED
-         */
-        this.PLAYBACK_NOT_ALLOWED = 'playbackNotAllowed';
         /**
          * The media's metadata has finished loading; all attributes now
          * contain as much useful information as they're going to.
@@ -228,13 +181,6 @@ class MediaPlayerEvents extends EventsBase {
          * @event MediaPlayerEvents#PLAYBACK_SEEKING
          */
         this.PLAYBACK_SEEKING = 'playbackSeeking';
-
-        /**
-         * Sent when a seek operation has been asked.
-         * @event MediaPlayerEvents#PLAYBACK_SEEK_ASKED
-         */
-        this.PLAYBACK_SEEK_ASKED = 'playbackSeekAsked';
-
         /**
          * Sent when playback of the media starts after having been paused;
          * that is, when playback is resumed after a prior pause event.

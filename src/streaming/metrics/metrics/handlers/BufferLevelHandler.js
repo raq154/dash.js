@@ -28,7 +28,7 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import MetricsConstants from '../../../constants/MetricsConstants';
+
 import FactoryMaker from '../../../../core/FactoryMaker';
 import HandlerHelpers from '../../utils/HandlerHelpers';
 
@@ -61,7 +61,7 @@ function BufferLevelHandler() {
     }
 
     function intervalCallback() {
-        let vo = getLowestBufferLevelVO();
+        var vo = getLowestBufferLevelVO();
 
         if (vo) {
             if (lastReportedTime !== vo.t) {
@@ -91,7 +91,7 @@ function BufferLevelHandler() {
     }
 
     function handleNewMetric(metric, vo, type) {
-        if (metric === MetricsConstants.BUFFER_LEVEL) {
+        if (metric === 'BufferLevel') {
             storedVOs[type] = vo;
         }
     }

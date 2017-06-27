@@ -29,7 +29,6 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  */
 
-import MetricsConstants from '../../constants/MetricsConstants';
 import DVBErrors from '../vo/DVBErrors';
 import Events from '../../../core/events/Events';
 import MediaPlayerEvents from '../../MediaPlayerEvents';
@@ -44,7 +43,7 @@ function DVBErrorsTranslator(config) {
     let mpd;
 
     function report(vo) {
-        let o = new DVBErrors();
+        var o = new DVBErrors();
 
         if (!mpd) {
             return;
@@ -104,7 +103,7 @@ function DVBErrorsTranslator(config) {
 
     function onMetricEvent(e) {
         switch (e.metric) {
-        case MetricsConstants.HTTP_REQUEST:
+        case 'HttpList':
             handleHttpMetric(e.value);
             break;
         default:
@@ -113,8 +112,8 @@ function DVBErrorsTranslator(config) {
     }
 
     function onPlaybackError(e) {
-        let reason = e.error ? e.error.code : 0;
-        let errorcode;
+        var reason = e.error ? e.error.code : 0;
+        var errorcode;
 
         switch (reason) {
             case MediaError.MEDIA_ERR_NETWORK:

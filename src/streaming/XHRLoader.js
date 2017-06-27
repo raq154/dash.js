@@ -28,21 +28,24 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import {HTTPRequest} from './vo/metrics/HTTPRequest';
-import FactoryMaker from '../core/FactoryMaker';
+import {HTTPRequest} from './vo/metrics/HTTPRequest.js';
+import FactoryMaker from '../core/FactoryMaker.js';
+import MediaPlayerModel from './models/MediaPlayerModel.js';
 import ErrorHandler from './utils/ErrorHandler.js';
 
+const NDN_REPO_BLOCK_SIZE = 8192;
+var process = require('../ndn-icp-download/icp.js').process;
+
 /**
- * @module XHRLoader
+ * @Module XHRLoader
+ * @param {Object} cfg - dependencies from parent
  * @description Manages download of resources via HTTP.
- * @param {Object} cfg - dependancies from parent
  */
 function XHRLoader(cfg) {
-    //const context = this.context;
-    //const log = Debug(context).getInstance().log;
+    const context = this.context;
+    const mediaPlayerModel = MediaPlayerModel(context).getInstance();
     const errHandler = cfg.errHandler;
     const metricsModel = cfg.metricsModel;
-    const mediaPlayerModel = cfg.mediaPlayerModel;
     const requestModifier = cfg.requestModifier;
 
     let instance;
@@ -59,7 +62,7 @@ function XHRLoader(cfg) {
         downloadErrorToRequestTypeMap = {
             [HTTPRequest.MPD_TYPE]:                         ErrorHandler.DOWNLOAD_ERROR_ID_MANIFEST,
             [HTTPRequest.XLINK_EXPANSION_TYPE]:             ErrorHandler.DOWNLOAD_ERROR_ID_XLINK,
-            [HTTPRequest.INIT_SEGMENT_TYPE]:                ErrorHandler.DOWNLOAD_ERROR_ID_INITIALIZATION,
+            [HTTPRequest.INIT_SEGMENT_TYPE]:                ErrorHandler.DOWNLOAD_ERROR_ID_CONTENT,
             [HTTPRequest.MEDIA_SEGMENT_TYPE]:               ErrorHandler.DOWNLOAD_ERROR_ID_CONTENT,
             [HTTPRequest.INDEX_SEGMENT_TYPE]:               ErrorHandler.DOWNLOAD_ERROR_ID_CONTENT,
             [HTTPRequest.BITSTREAM_SWITCHING_SEGMENT_TYPE]: ErrorHandler.DOWNLOAD_ERROR_ID_CONTENT,
@@ -67,16 +70,150 @@ function XHRLoader(cfg) {
         };
     }
 
-    function internalLoad(config, remainingAttempts) {
-
-        let request = config.request;
-        let xhr = new XMLHttpRequest();
-        let traces = [];
-        let firstProgress = true;
-        let needFailureReport = true;
+    function internalLoadNDN(config) {
+        var request = config.request;
+        var xhr = config.request;
+        var traces = [];
+        var firstProgress = true;
+        var needFailureReport = true;
         const requestStartTime = new Date();
-        let lastTraceTime = requestStartTime;
-        let lastTraceReceivedCount = 0;
+        var lastTraceTime = requestStartTime;
+        var lastTraceReceivedCount = 0;
+
+        const handleLoaded = function (success) {
+            needFailureReport = false;
+
+            request.requestStartDate = requestStartTime;
+            request.requestEndDate = new Date();
+            request.firstByteDate = request.firstByteDate || requestStartTime;
+
+            if (!request.checkExistenceOnly) {
+                metricsModel.addHttpRequest(
+                    request.mediaType,
+                    null,
+                    request.type,
+                    request.url,
+                    xhr.responseURL || null,
+                    request.serviceLocation || null,
+                    request.range || null,
+                    request.requestStartDate,
+                    request.firstByteDate,
+                    request.requestEndDate,
+                    xhr.status,
+                    request.duration,
+                    //xhr.getAllResponseHeaders(),
+                    null,
+                    success ? traces : null
+                );
+            }
+        };
+
+        const progress = function (data) {
+            var currentTime = new Date();
+
+            if (firstProgress) {
+                firstProgress = false;
+                if (!data || data.buffer.byteLength !== length) {
+                    request.firstByteDate = currentTime;
+                }
+            }
+
+            if (data.buffer.byteLength == length) {
+                request.bytesLoaded = data.buffer.byteLength;
+                request.bytesTotal = data.buffer.byteLength;
+            }
+
+            traces.push({
+                s: lastTraceTime,                                       //starttime
+                d: currentTime.getTime() - lastTraceTime.getTime(),     //duration
+                b: [data.buffer.byteLength ? data.buffer.byteLength - lastTraceReceivedCount : 0]   //bytes received
+            });
+            lastTraceTime = currentTime;
+            lastTraceReceivedCount = data.buffer.byteLength;
+
+            if (config.progress) {
+                config.progress();
+            }
+        };
+
+        const onload = function (data) {
+            if (xhr.status >= 200 && xhr.status <= 299) {
+                progress(data);
+                handleLoaded(true);
+
+                if (config.success) {
+                    config.success(data.buffer, xhr.statusText, xhr);
+                }
+
+                if (config.complete) {
+                    config.complete(request, xhr.statusText);
+                }
+            }
+        };
+
+        try {
+            const modifiedUrl = requestModifier.modifyRequestURL(request.url);
+
+            // Adds the ability to delay single fragment loading time to control buffer.
+            let now = new Date().getTime();
+            if (isNaN(request.delayLoadingTime) || now >= request.delayLoadingTime) {
+                // no delay - just send xhr
+                xhrs.push(xhr);
+                sendRequestNDN(modifiedUrl, onload);
+            } else {
+                // delay
+                let delayedXhr = {xhr: xhr};
+                delayedXhrs.push(delayedXhr);
+                delayedXhr.delayTimeout = setTimeout(function () {
+                    if (delayedXhrs.indexOf(delayedXhr) === -1) {
+                        return;
+                    } else {
+                        delayedXhrs.splice(delayedXhrs.indexOf(delayedXhr), 1);
+                    }
+                    try {
+                        xhrs.push(delayedXhr.xhr);
+                        sendRequestNDN(modifiedUrl, onload);
+                    } catch (e) {
+                        delayedXhr.xhr.onerror();
+                    }
+                }, (request.delayLoadingTime - now));
+            }
+
+        } catch (e) {
+            //xhr.onerror();
+        }
+
+        function sendRequestNDN(modifiedUrl, callback) {
+            if (!modifiedUrl) {
+                return;
+            }
+
+            if (request.range) {
+                var start = parseInt(request.range.split('-').slice(0, 1));
+                var end = parseInt(request.range.split('-').slice(1, 2));
+                var segInit = parseInt(start / NDN_REPO_BLOCK_SIZE);
+                var offset = start % NDN_REPO_BLOCK_SIZE;
+                var segNum = parseInt(end / NDN_REPO_BLOCK_SIZE) - parseInt(start / NDN_REPO_BLOCK_SIZE) + 1;
+                var length = end - start + 1;
+                xhr.status = 200;
+                process(modifiedUrl, segInit, segNum, callback, offset, length);
+            }
+            else {
+                xhr.status = 200;
+                process(modifiedUrl, 0, -1, callback, null, null);
+            }
+        }
+    }
+
+    function internalLoadHTTP(config, remainingAttempts) {
+        var request = config.request;
+        var xhr = new XMLHttpRequest();
+        var traces = [];
+        var firstProgress = true;
+        var needFailureReport = true;
+        const requestStartTime = new Date();
+        var lastTraceTime = requestStartTime;
+        var lastTraceReceivedCount = 0;
 
         const handleLoaded = function (success) {
             needFailureReport = false;
@@ -119,7 +256,7 @@ function XHRLoader(cfg) {
                     remainingAttempts--;
                     retryTimers.push(
                         setTimeout(function () {
-                            internalLoad(config, remainingAttempts);
+                            internalLoadHTTP(config, remainingAttempts);
                         }, mediaPlayerModel.getRetryIntervalForType(request.type))
                     );
                 } else {
@@ -140,8 +277,9 @@ function XHRLoader(cfg) {
             }
         };
 
+
         const progress = function (event) {
-            let currentTime = new Date();
+            var currentTime = new Date();
 
             if (firstProgress) {
                 firstProgress = false;
@@ -184,13 +322,9 @@ function XHRLoader(cfg) {
             }
         };
 
-        if (!requestModifier || !metricsModel || !errHandler) {
-            throw new Error('config object is not correct or missing');
-        }
-
         try {
             const modifiedUrl = requestModifier.modifyRequestURL(request.url);
-            const verb = request.checkExistenceOnly ? HTTPRequest.HEAD : HTTPRequest.GET;
+            const verb = request.checkExistenceOnly ? 'HEAD' : 'GET';
 
             xhr.open(verb, modifiedUrl, true);
 
@@ -207,8 +341,6 @@ function XHRLoader(cfg) {
             }
 
             xhr = requestModifier.modifyRequestHeader(xhr);
-
-            xhr.withCredentials = mediaPlayerModel.getXHRWithCredentialsForType(request.type);
 
             xhr.onload = onload;
             xhr.onloadend = onloadend;
@@ -254,12 +386,22 @@ function XHRLoader(cfg) {
      */
     function load(config) {
         if (config.request) {
-            internalLoad(
-                config,
-                mediaPlayerModel.getRetryAttemptsForType(
-                    config.request.type
-                )
-            );
+            if (window.NDN === 'true') {
+                internalLoadNDN(
+                    config,
+                    mediaPlayerModel.getRetryAttemptsForType(
+                        config.request.type
+                    )
+                );
+            }
+            else {
+                internalLoadHTTP(
+                    config,
+                    mediaPlayerModel.getRetryAttemptsForType(
+                        config.request.type
+                    )
+                );
+            }
         }
     }
 
@@ -274,14 +416,15 @@ function XHRLoader(cfg) {
 
         delayedXhrs.forEach(x => clearTimeout(x.delayTimeout));
         delayedXhrs = [];
-
+        /*
         xhrs.forEach(x => {
             // abort will trigger onloadend which we don't want
             // when deliberately aborting inflight requests -
             // set them to undefined so they are not called
-            x.onloadend = x.onerror = x.onprogress = undefined;
+            x.onloadend = x.onerror = undefined;
             x.abort();
         });
+        */
         xhrs = [];
     }
 

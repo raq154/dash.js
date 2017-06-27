@@ -54,7 +54,7 @@ function MetricsHandlersController(config) {
     function initialize(metrics, reportingController) {
         metrics.split(',').forEach(
             (m, midx, ms) => {
-                let handler;
+                var handler;
 
                 // there is a bug in ISO23009-1 where the metrics attribute
                 // is a comma-separated list but HttpList key can contain a

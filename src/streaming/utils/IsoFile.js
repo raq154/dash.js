@@ -35,7 +35,17 @@ import FactoryMaker from '../../core/FactoryMaker';
 function IsoFile() {
 
     let instance,
-        parsedIsoFile;
+        parsedIsoFile,
+        commonProps,
+        sidxProps,
+        sidxRefProps,
+        emsgProps,
+        mdhdProps,
+        mfhdProps,
+        tfhdProps,
+        tfdtProps,
+        trunProps,
+        trunSampleProps;
 
     /**
     * @param {string} type
@@ -50,19 +60,15 @@ function IsoFile() {
 
     /**
     * @param {string} type
-    * @returns {Array|null} array of {@link IsoBox}
+    * @returns {Array} array of {@link IsoBox}
     * @memberof IsoFile#
     */
     function getBoxes(type) {
-        if (!parsedIsoFile) {
-            return null;
-        }
+        var boxData = parsedIsoFile.fetchAll(type);
+        var boxes = [];
+        var box;
 
-        let boxData = parsedIsoFile.fetchAll(type);
-        let boxes = [];
-        let box;
-
-        for (let i = 0, ln = boxData.length; i < ln; i++) {
+        for (var i = 0, ln = boxData.length; i < ln; i++) {
             box = convertToDashIsoBox(boxData[i]);
 
             if (box) {
@@ -88,19 +94,139 @@ function IsoFile() {
     function getLastBox() {
         if (!parsedIsoFile || !parsedIsoFile.boxes || !parsedIsoFile.boxes.length) return null;
 
-        let type = parsedIsoFile.boxes[parsedIsoFile.boxes.length - 1].type;
-        let boxes = getBoxes(type);
+        var type = parsedIsoFile.boxes[parsedIsoFile.boxes.length - 1].type;
+        var boxes = getBoxes(type);
 
         return boxes[boxes.length - 1];
+    }
+
+    /**
+    * @returns {number}
+    * @memberof IsoFile#
+    */
+    function getOffset() {
+        return parsedIsoFile._cursor.offset;
+    }
+
+    function setup() {
+        commonProps = {
+            offset: '_offset',
+            size: 'size',
+            type: 'type'
+        };
+
+        sidxProps = {
+            references: 'references',
+            timescale: 'timescale',
+            earliest_presentation_time: 'earliest_presentation_time',
+            first_offset: 'first_offset'
+        };
+
+        sidxRefProps = {
+            reference_type: 'reference_type',
+            referenced_size: 'referenced_size',
+            subsegment_duration: 'subsegment_duration'
+        };
+
+        emsgProps = {
+            id: 'id',
+            value: 'value',
+            timescale: 'timescale',
+            scheme_id_uri: 'scheme_id_uri',
+            presentation_time_delta: 'presentation_time_delta',
+            event_duration: 'event_duration',
+            message_data: 'message_data'
+        };
+
+        mdhdProps = {
+            timescale: 'timescale'
+        };
+
+        mfhdProps = {
+            sequence_number: 'sequence_number'
+        };
+
+        tfhdProps = {
+            base_data_offset: 'base_data_offset',
+            sample_description_index: 'sample_description_index',
+            default_sample_duration: 'default_sample_duration',
+            default_sample_size: 'default_sample_size',
+            default_sample_flags: 'default_sample_flags',
+            flags: 'flags'
+        };
+
+        tfdtProps = {
+            version: 'version',
+            baseMediaDecodeTime: 'baseMediaDecodeTime',
+            flags: 'flags'
+        };
+
+        trunProps = {
+            sample_count: 'sample_count',
+            first_sample_flags: 'first_sample_flags',
+            data_offset: 'data_offset',
+            flags: 'flags',
+            samples: 'samples'
+        };
+
+        trunSampleProps = {
+            sample_size: 'sample_size',
+            sample_duration: 'sample_duration',
+            sample_composition_time_offset: 'sample_composition_time_offset'
+        };
+    }
+
+    function copyProps(from, to, props) {
+        for (var prop in props) {
+            to[prop] = from[props[prop]];
+        }
     }
 
     function convertToDashIsoBox(boxData) {
         if (!boxData) return null;
 
-        let box = new IsoBox(boxData);
+        var box = new IsoBox();
+        var i,
+            ln;
+
+        copyProps(boxData, box, commonProps);
 
         if (boxData.hasOwnProperty('_incomplete')) {
             box.isComplete = !boxData._incomplete;
+        }
+
+        switch (box.type) {
+            case 'sidx':
+                copyProps(boxData, box, sidxProps);
+                if (box.references) {
+                    for (i = 0, ln = box.references.length; i < ln; i++) {
+                        copyProps(boxData.references[i], box.references[i], sidxRefProps);
+                    }
+                }
+                break;
+            case 'emsg':
+                copyProps(boxData, box, emsgProps);
+                break;
+            case 'mdhd':
+                copyProps(boxData, box, mdhdProps);
+                break;
+            case 'mfhd':
+                copyProps(boxData, box, mfhdProps);
+                break;
+            case 'tfhd':
+                copyProps(boxData, box, tfhdProps);
+                break;
+            case 'tfdt':
+                copyProps(boxData, box, tfdtProps);
+                break;
+            case 'trun':
+                copyProps(boxData, box, trunProps);
+                if (box.samples) {
+                    for (i = 0, ln = box.samples.length; i < ln; i++) {
+                        copyProps(boxData.samples[i], box.samples[i], trunSampleProps);
+                    }
+                }
+                break;
         }
 
         return box;
@@ -110,8 +236,11 @@ function IsoFile() {
         getBox: getBox,
         getBoxes: getBoxes,
         setData: setData,
-        getLastBox: getLastBox
+        getLastBox: getLastBox,
+        getOffset: getOffset
     };
+
+    setup();
 
     return instance;
 }

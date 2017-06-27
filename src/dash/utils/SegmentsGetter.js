@@ -28,7 +28,7 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import DashConstants from '../constants/DashConstants';
+
 import FactoryMaker from '../../core/FactoryMaker';
 import TimelineSegmentsGetter from './TimelineSegmentsGetter';
 import TemplateSegmentsGetter from './TemplateSegmentsGetter';
@@ -50,18 +50,18 @@ function SegmentsGetter(config, isDynamic) {
     }
 
     function getSegments(representation, requestedTime, index, onSegmentListUpdatedCallback, availabilityUpperLimit) {
-        let segments;
-        const type = representation.segmentInfoType;
+        var segments;
+        var type = representation.segmentInfoType;
 
         // Already figure out the segments.
-        if (type === DashConstants.SEGMENT_BASE || type === DashConstants.BASE_URL || !isSegmentListUpdateRequired(representation, index)) {
+        if (type === 'SegmentBase' || type === 'BaseURL' || !isSegmentListUpdateRequired(representation, index)) {
             segments = representation.segments;
         } else {
-            if (type === DashConstants.SEGMENT_TIMELINE) {
+            if (type === 'SegmentTimeline') {
                 segments = timelineSegmentsGetter.getSegments(representation, requestedTime, index, availabilityUpperLimit);
-            } else if (type === DashConstants.SEGMENT_TEMPLATE) {
+            } else if (type === 'SegmentTemplate') {
                 segments = templateSegmentsGetter.getSegments(representation, requestedTime, index, availabilityUpperLimit);
-            } else if (type === DashConstants.SEGMENT_LIST) {
+            } else if (type === 'SegmentList') {
                 segments = listSegmentsGetter.getSegments(representation, requestedTime, index, availabilityUpperLimit);
             }
 
@@ -69,13 +69,15 @@ function SegmentsGetter(config, isDynamic) {
                 onSegmentListUpdatedCallback(representation, segments);
             }
         }
+
+        return segments;
     }
 
     function isSegmentListUpdateRequired(representation, index) {
-        let segments = representation.segments;
-        let updateRequired = false;
+        var segments = representation.segments;
+        var updateRequired = false;
 
-        let upperIdx,
+        var upperIdx,
             lowerIdx;
 
         if (!segments || segments.length === 0) {

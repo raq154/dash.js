@@ -28,7 +28,8 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import Constants from '../constants/Constants';
+
+import PlaybackController from '../controllers/PlaybackController';
 import FactoryMaker from '../../core/FactoryMaker';
 import Debug from '../../core/Debug';
 import EventBus from '../../core/EventBus';
@@ -62,6 +63,7 @@ function EventController() {
         eventInterval = null;
         refreshDelay = 100;
         presentationTimeThreshold = refreshDelay / 1000;
+        playbackController = PlaybackController(context).getInstance();
     }
 
     function clear() {
@@ -146,7 +148,7 @@ function EventController() {
         var manifest = manifestModel.getValue();
         var url = manifest.url;
 
-        if (manifest.hasOwnProperty(Constants.LOCATION)) {
+        if (manifest.hasOwnProperty('Location')) {
             url = manifest.Location;
         }
         log('Refresh manifest @ ' + url);
@@ -193,10 +195,6 @@ function EventController() {
         if (config.manifestUpdater) {
             manifestUpdater = config.manifestUpdater;
         }
-
-        if (config.playbackController) {
-            playbackController = config.playbackController;
-        }
     }
 
     function reset() {
@@ -221,4 +219,4 @@ function EventController() {
 }
 
 EventController.__dashjs_factory_name = 'EventController';
-export default FactoryMaker.getClassFactory(EventController);
+export default FactoryMaker.getSingletonFactory(EventController);

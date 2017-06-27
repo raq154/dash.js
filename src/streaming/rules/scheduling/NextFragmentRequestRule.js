@@ -28,31 +28,37 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-import Constants from '../../constants/Constants';
 import Debug from '../../../core/Debug';
 import FactoryMaker from '../../../core/FactoryMaker';
 
 function NextFragmentRequestRule(config) {
 
-    const context = this.context;
-    const log = Debug(context).getInstance().log;
-    const adapter = config.adapter;
-    const sourceBufferController = config.sourceBufferController;
-    const textController = config.textController;
+    let instance;
+    let context = this.context;
+    let log = Debug(context).getInstance().log;
+    let adapter = config.adapter;
+    let sourceBufferController = config.sourceBufferController;
+    let virtualBuffer = config.virtualBuffer;
+    let textSourceBuffer = config.textSourceBuffer;
 
-    function execute(streamProcessor, requestToReplace) {
+    function execute(streamProcessor) {
 
-        const representationInfo = streamProcessor.getCurrentRepresentationInfo();
-        const mediaInfo = representationInfo.mediaInfo;
-        const mediaType = mediaInfo.type;
-        const scheduleController = streamProcessor.getScheduleController();
-        const seekTarget = scheduleController.getSeekTarget();
-        const hasSeekTarget = !isNaN(seekTarget);
-        const buffer = streamProcessor.getBuffer();
-
+        let representationInfo = streamProcessor.getCurrentRepresentationInfo();
+        let mediaInfo = representationInfo.mediaInfo;
+        let mediaType = mediaInfo.type;
+        let streamId = mediaInfo.streamInfo.id;
+        let scheduleController = streamProcessor.getScheduleController();
+        let seekTarget = scheduleController.getSeekTarget();
+        let hasSeekTarget = !isNaN(seekTarget);
+        let keepIdx = !hasSeekTarget;
         let time = hasSeekTarget ? seekTarget : adapter.getIndexHandlerTime(streamProcessor);
+        let buffer = streamProcessor.getBuffer();
+        let range = null;
+        let appendedChunks;
+        let request;
 
-        if (isNaN(time) || (mediaType === Constants.FRAGMENTED_TEXT && textController.getAllTracksAreDisabled())) {
+        if (isNaN(time) ||
+            (mediaType === 'fragmentedText' && textSourceBuffer.getAllTracksAreDisabled())) {
             return null;
         }
 
@@ -64,46 +70,35 @@ function NextFragmentRequestRule(config) {
          * This is critical for IE/Safari/EDGE
          * */
         if (buffer) {
-            const range = sourceBufferController.getBufferRange(buffer, time);
+            range = sourceBufferController.getBufferRange(streamProcessor.getBuffer(), time);
             if (range !== null) {
-                log('Prior to making a request for time, NextFragmentRequestRule is aligning index handler\'s currentTime with bufferedRange.end.', time, ' was changed to ', range.end);
-                time = range.end;
+                appendedChunks = virtualBuffer.getChunks({streamId: streamId, mediaType: mediaType, appended: true, mediaInfo: mediaInfo, forRange: range});
+                if (appendedChunks && appendedChunks.length > 0) {
+                    let t = time;
+                    time = appendedChunks[appendedChunks.length - 1].bufferedRange.end;
+                    log('Prior to making a request for time, NextFragmentRequestRule is aligning index handler\'s currentTime with bufferedRange.end.',  t, ' was changed to ', time);
+                }
             }
         }
 
-        let request;
-        if (requestToReplace) {
-            // log('requestToReplace :' + requestToReplace.url);
-            time = requestToReplace.startTime + (requestToReplace.duration / 2);
-            request = adapter.getFragmentRequestForTime(streamProcessor, representationInfo, time, {
-                timeThreshold: 0,
-                ignoreIsFinished: true
-            });
-        } else {
-            request = adapter.getFragmentRequestForTime(streamProcessor, representationInfo, time, {
-                keepIdx: !hasSeekTarget
-            });
-            if (streamProcessor.getFragmentModel().isFragmentLoaded(request)) {
-                request = adapter.getNextFragmentRequest(streamProcessor, representationInfo);
-            }
-            if (request) {
-                adapter.setIndexHandlerTime(streamProcessor, request.startTime + request.duration);
-                request.delayLoadingTime = new Date().getTime() + scheduleController.getTimeToLoadDelay();
-                scheduleController.setTimeToLoadDelay(0);
-            }
+
+        request = adapter.getFragmentRequestForTime(streamProcessor, representationInfo, time, {keepIdx: keepIdx});
+        //log("getForTime", request, time);
+        if (request && streamProcessor.getFragmentModel().isFragmentLoaded(request)) {
+            request = adapter.getNextFragmentRequest(streamProcessor, representationInfo);
+            //log("getForNext", request, streamProcessor.getIndexHandler().getCurrentIndex());
         }
 
-        /*
         if (request) {
-            log('Return request :' + request.url);
-        } else {
-            log('no request');
-        }*/
+            adapter.setIndexHandlerTime(streamProcessor, request.startTime + request.duration);
+            request.delayLoadingTime = new Date().getTime() + scheduleController.getTimeToLoadDelay();
+            scheduleController.setTimeToLoadDelay(0); // only delay one fragment
+        }
 
         return request;
     }
 
-    const instance = {
+    instance = {
         execute: execute
     };
 

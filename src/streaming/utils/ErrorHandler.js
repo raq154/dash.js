@@ -64,8 +64,8 @@ function ErrorHandler() {
     }
 
     // {message: "", id: "codec"|"parse"|"nostreams", manifest: {parsed manifest}}
-    function manifestError(message, id, manifest, err) {
-        eventBus.trigger(Events.ERROR, {error: 'manifestError', event: {message: message, id: id, manifest: manifest, event: err}});
+    function manifestError(message, id, manifest) {
+        eventBus.trigger(Events.ERROR, {error: 'manifestError', event: {message: message, id: id, manifest: manifest}});
     }
 
     // {message: '', id: 'parse', cc: ''}
@@ -113,7 +113,5 @@ factory.MANIFEST_ERROR_ID_CODEC             = MANIFEST_ERROR_ID_CODEC;
 factory.MANIFEST_ERROR_ID_PARSE             = MANIFEST_ERROR_ID_PARSE;
 factory.MANIFEST_ERROR_ID_NOSTREAMS         = MANIFEST_ERROR_ID_NOSTREAMS;
 factory.TIMED_TEXT_ERROR_ID_PARSE           = TIMED_TEXT_ERROR_ID_PARSE;
-
-FactoryMaker.updateSingletonFactory(ErrorHandler.__dashjs_factory_name, factory);
 
 export default factory;

@@ -62,7 +62,7 @@ function ProtectionKeyController() {
     function initialize() {
         keySystems = [];
 
-        let keySystem;
+        var keySystem;
 
         // PlayReady
         keySystem = KeySystemPlayReady(context).getInstance();
@@ -104,7 +104,7 @@ function ProtectionKeyController() {
      * @instance
      */
     function getKeySystemBySystemString(systemString) {
-        for (let i = 0; i < keySystems.length; i++) {
+        for (var i = 0; i < keySystems.length; i++) {
             if (keySystems[i].systemString === systemString) {
                 return keySystems[i];
             }
@@ -142,10 +142,10 @@ function ProtectionKeyController() {
      */
     function initDataEquals(initData1, initData2) {
         if (initData1.byteLength === initData2.byteLength) {
-            let data1 = new Uint8Array(initData1);
-            let data2 = new Uint8Array(initData2);
+            var data1 = new Uint8Array(initData1);
+            var data2 = new Uint8Array(initData2);
 
-            for (let j = 0; j < data1.length; j++) {
+            for (var j = 0; j < data1.length; j++) {
                 if (data1[j] !== data2[j]) {
                     return false;
                 }
@@ -170,8 +170,8 @@ function ProtectionKeyController() {
      * @instance
      */
     function getSupportedKeySystemsFromContentProtection(cps) {
-        let cp, ks, ksIdx, cpIdx;
-        let supportedKS = [];
+        var cp, ks, ksIdx, cpIdx;
+        var supportedKS = [];
 
         if (cps) {
             for (ksIdx = 0; ksIdx < keySystems.length; ++ksIdx) {
@@ -181,7 +181,7 @@ function ProtectionKeyController() {
                     if (cp.schemeIdUri.toLowerCase() === ks.schemeIdURI) {
 
                         // Look for DRM-specific ContentProtection
-                        let initData = ks.getInitData(cp);
+                        var initData = ks.getInitData(cp);
                         if (!!initData) {
                             supportedKS.push({
                                 ks: keySystems[ksIdx],
@@ -198,12 +198,10 @@ function ProtectionKeyController() {
     /**
      * Returns key systems supported by this player for the given PSSH
      * initializationData. Only key systems supported by this player
-     * that have protection data present will be returned.  Key systems are returned in priority order
+     * will be returned.  Key systems are returned in priority order
      * (highest priority first)
      *
      * @param {ArrayBuffer} initData Concatenated PSSH data for all DRMs
-     * supported by the content
-     * @param {ProtectionData} protDataSet user specified protection data - license server url etc
      * supported by the content
      * @returns {Array.<Object>} array of objects indicating which supported key
      * systems were found.  Empty array is returned if no
@@ -211,15 +209,13 @@ function ProtectionKeyController() {
      * @memberof module:ProtectionKeyController
      * @instance
      */
-    function getSupportedKeySystems(initData, protDataSet) {
-        let supportedKS = [];
-        let pssh = CommonEncryption.parsePSSHList(initData);
+    function getSupportedKeySystems(initData) {
+        var ksIdx;
+        var supportedKS = [];
+        var pssh = CommonEncryption.parsePSSHList(initData);
 
-        for (let ksIdx = 0; ksIdx < keySystems.length; ++ksIdx) {
-            let keySystemString = keySystems[ksIdx].systemString;
-            let shouldNotFilterOutKeySystem = (protDataSet) ? keySystemString in protDataSet : true;
-
-            if (keySystems[ksIdx].uuid in pssh && shouldNotFilterOutKeySystem) {
+        for (ksIdx = 0; ksIdx < keySystems.length; ++ksIdx) {
+            if (keySystems[ksIdx].uuid in pssh) {
                 supportedKS.push({
                     ks: keySystems[ksIdx],
                     initData: pssh[keySystems[ksIdx].uuid]
@@ -250,11 +246,11 @@ function ProtectionKeyController() {
 
         // Our default server implementations do not do anything with "license-release" or
         // "individualization-request" messages, so we just send a success event
-        if (messageType === 'license-release' || messageType === 'individualization-request') {
+        if (messageType === 'license-release' || messageType == 'individualization-request') {
             return null;
         }
 
-        let licenseServerData = null;
+        var licenseServerData = null;
         if (protData && protData.hasOwnProperty('drmtoday')) {
             licenseServerData = DRMToday(context).getInstance();
         } else if (keySystem.systemString === 'com.widevine.alpha') {

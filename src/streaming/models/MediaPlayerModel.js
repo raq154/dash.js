@@ -29,15 +29,9 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  */
 import FactoryMaker from '../../core/FactoryMaker';
-import {
-    HTTPRequest
-}
-from '../vo/metrics/HTTPRequest';
+import {HTTPRequest} from '../vo/metrics/HTTPRequest';
 
-const DEFAULT_UTC_TIMING_SOURCE = {
-    scheme: 'urn:mpeg:dash:utc:http-xsdate:2014',
-    value: 'http://time.akamai.com/?iso'
-};
+const DEFAULT_UTC_TIMING_SOURCE = { scheme: 'urn:mpeg:dash:utc:http-xsdate:2014', value: 'http://time.akamai.com/?iso' };
 const LIVE_DELAY_FRAGMENT_COUNT = 4;
 
 const DEFAULT_LOCAL_STORAGE_BITRATE_EXPIRATION = 360000;
@@ -49,7 +43,6 @@ const ABANDON_LOAD_TIMEOUT = 10000;
 const BUFFER_TO_KEEP = 30;
 const BUFFER_PRUNING_INTERVAL = 30;
 const DEFAULT_MIN_BUFFER_TIME = 12;
-const DEFAULT_MIN_BUFFER_TIME_FAST_SWITCH = 20;
 const BUFFER_TIME_AT_TOP_QUALITY = 30;
 const BUFFER_TIME_AT_TOP_QUALITY_LONG_FORM = 60;
 const LONG_FORM_CONTENT_DURATION_THRESHOLD = 600;
@@ -66,8 +59,6 @@ const XLINK_RETRY_INTERVAL = 500;
 
 //This value influences the startup time for live (in ms).
 const WALLCLOCK_TIME_UPDATE_INTERVAL = 50;
-
-const DEFAULT_XHR_WITH_CREDENTIALS = false;
 
 function MediaPlayerModel() {
 
@@ -92,11 +83,7 @@ function MediaPlayerModel() {
         retryAttempts,
         retryIntervals,
         wallclockTimeUpdateInterval,
-        bufferOccupancyABREnabled,
-        useDefaultABRRules,
-        xhrWithCredentials,
-        fastSwitchEnabled,
-        customABRRule;
+        bufferOccupancyABREnabled;
 
     function setup() {
         UTCTimingSources = [];
@@ -104,21 +91,13 @@ function MediaPlayerModel() {
         useManifestDateHeaderTimeSource = true;
         scheduleWhilePaused = true;
         bufferOccupancyABREnabled = false;
-        useDefaultABRRules = true;
-        fastSwitchEnabled = false;
-        lastBitrateCachingInfo = {
-            enabled: true,
-            ttl: DEFAULT_LOCAL_STORAGE_BITRATE_EXPIRATION
-        };
-        lastMediaSettingsCachingInfo = {
-            enabled: true,
-            ttl: DEFAULT_LOCAL_STORAGE_MEDIA_SETTINGS_EXPIRATION
-        };
+        lastBitrateCachingInfo = {enabled: true , ttl: DEFAULT_LOCAL_STORAGE_BITRATE_EXPIRATION};
+        lastMediaSettingsCachingInfo = {enabled: true , ttl: DEFAULT_LOCAL_STORAGE_MEDIA_SETTINGS_EXPIRATION};
         liveDelayFragmentCount = LIVE_DELAY_FRAGMENT_COUNT;
         liveDelay = undefined; // Explicitly state that default is undefined
         bufferToKeep = BUFFER_TO_KEEP;
         bufferPruningInterval = BUFFER_PRUNING_INTERVAL;
-        stableBufferTime = NaN;
+        stableBufferTime = DEFAULT_MIN_BUFFER_TIME;
         bufferTimeAtTopQuality = BUFFER_TIME_AT_TOP_QUALITY;
         bufferTimeAtTopQualityLongForm = BUFFER_TIME_AT_TOP_QUALITY_LONG_FORM;
         longFormContentDurationThreshold = LONG_FORM_CONTENT_DURATION_THRESHOLD;
@@ -126,10 +105,6 @@ function MediaPlayerModel() {
         bandwidthSafetyFactor = BANDWIDTH_SAFETY_FACTOR;
         abandonLoadTimeout = ABANDON_LOAD_TIMEOUT;
         wallclockTimeUpdateInterval = WALLCLOCK_TIME_UPDATE_INTERVAL;
-        xhrWithCredentials = {
-            default: DEFAULT_XHR_WITH_CREDENTIALS
-        };
-        customABRRule = [];
 
         retryAttempts = {
             [HTTPRequest.MPD_TYPE]:                         MANIFEST_RETRY_ATTEMPTS,
@@ -161,57 +136,6 @@ function MediaPlayerModel() {
         return bufferOccupancyABREnabled;
     }
 
-    function setUseDefaultABRRules(value) {
-        useDefaultABRRules = value;
-    }
-
-    function getUseDefaultABRRules() {
-        return useDefaultABRRules;
-    }
-
-    function findABRCustomRule(rulename) {
-        let i;
-        for (i = 0; i < customABRRule.length; i++) {
-            if (customABRRule[i].rulename === rulename) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    function getABRCustomRules() {
-        return customABRRule;
-    }
-
-    function addABRCustomRule(type, rulename, rule) {
-
-        let index = findABRCustomRule(rulename);
-        if (index === -1) {
-            // add rule
-            customABRRule.push({
-                type: type,
-                rulename: rulename,
-                rule: rule
-            });
-        } else {
-            // update rule
-            customABRRule[index].type = type;
-            customABRRule[index].rule = rule;
-        }
-    }
-
-    function removeABRCustomRule(rulename) {
-        let index = findABRCustomRule(rulename);
-        if (index !== -1) {
-            // remove rule
-            customABRRule.splice(index, 1);
-        }
-    }
-
-    function removeAllABRCustomRule() {
-        customABRRule = [];
-    }
-
     function setBandwidthSafetyFactor(value) {
         bandwidthSafetyFactor = value;
     }
@@ -228,12 +152,12 @@ function MediaPlayerModel() {
         return abandonLoadTimeout;
     }
 
-    function setStableBufferTime(value) {
+    function setStableBufferTime (value) {
         stableBufferTime = value;
     }
 
     function getStableBufferTime() {
-        return !isNaN(stableBufferTime) ? stableBufferTime : fastSwitchEnabled ? DEFAULT_MIN_BUFFER_TIME_FAST_SWITCH : DEFAULT_MIN_BUFFER_TIME;
+        return stableBufferTime;
     }
 
     function setBufferTimeAtTopQuality(value) {
@@ -311,20 +235,12 @@ function MediaPlayerModel() {
         retryAttempts[HTTPRequest.MEDIA_SEGMENT_TYPE] = value;
     }
 
-    function setManifestRetryAttempts(value) {
-        retryAttempts[HTTPRequest.MPD_TYPE] = value;
-    }
-
     function setRetryAttemptsForType(type, value) {
         retryAttempts[type] = value;
     }
 
     function getFragmentRetryAttempts() {
         return retryAttempts[HTTPRequest.MEDIA_SEGMENT_TYPE];
-    }
-
-    function getManifestRetryAttempts() {
-        return retryAttempts[HTTPRequest.MPD_TYPE];
     }
 
     function getRetryAttemptsForType(type) {
@@ -335,20 +251,12 @@ function MediaPlayerModel() {
         retryIntervals[HTTPRequest.MEDIA_SEGMENT_TYPE] = value;
     }
 
-    function setManifestRetryInterval(value) {
-        retryIntervals[HTTPRequest.MPD_TYPE] = value;
-    }
-
     function setRetryIntervalForType(type, value) {
         retryIntervals[type] = value;
     }
 
     function getFragmentRetryInterval() {
         return retryIntervals[HTTPRequest.MEDIA_SEGMENT_TYPE];
-    }
-
-    function getManifestRetryInterval() {
-        return retryIntervals[HTTPRequest.MPD_TYPE];
     }
 
     function getRetryIntervalForType(type) {
@@ -411,35 +319,6 @@ function MediaPlayerModel() {
         return UTCTimingSources;
     }
 
-    function setXHRWithCredentialsForType(type, value) {
-        if (!type) {
-            Object.keys(xhrWithCredentials).forEach(key => {
-                setXHRWithCredentialsForType(key, value);
-            });
-        } else {
-            xhrWithCredentials[type] = !!value;
-        }
-    }
-
-    function getXHRWithCredentialsForType(type) {
-        const useCreds = xhrWithCredentials[type];
-
-        if (useCreds === undefined) {
-            return xhrWithCredentials.default;
-        }
-
-        return useCreds;
-    }
-
-
-    function getFastSwitchEnabled() {
-        return fastSwitchEnabled;
-    }
-
-    function setFastSwitchEnabled(value) {
-        fastSwitchEnabled = value;
-    }
-
     function reset() {
         //TODO need to figure out what props to persist across sessions and which to reset if any.
         //setup();
@@ -448,12 +327,6 @@ function MediaPlayerModel() {
     instance = {
         setBufferOccupancyABREnabled: setBufferOccupancyABREnabled,
         getBufferOccupancyABREnabled: getBufferOccupancyABREnabled,
-        setUseDefaultABRRules: setUseDefaultABRRules,
-        getUseDefaultABRRules: getUseDefaultABRRules,
-        getABRCustomRules: getABRCustomRules,
-        addABRCustomRule: addABRCustomRule,
-        removeABRCustomRule: removeABRCustomRule,
-        removeAllABRCustomRule: removeAllABRCustomRule,
         setBandwidthSafetyFactor: setBandwidthSafetyFactor,
         getBandwidthSafetyFactor: getBandwidthSafetyFactor,
         setAbandonLoadTimeout: setAbandonLoadTimeout,
@@ -478,14 +351,10 @@ function MediaPlayerModel() {
         getBufferPruningInterval: getBufferPruningInterval,
         setFragmentRetryAttempts: setFragmentRetryAttempts,
         getFragmentRetryAttempts: getFragmentRetryAttempts,
-        setManifestRetryAttempts: setManifestRetryAttempts,
-        getManifestRetryAttempts: getManifestRetryAttempts,
         setRetryAttemptsForType: setRetryAttemptsForType,
         getRetryAttemptsForType: getRetryAttemptsForType,
         setFragmentRetryInterval: setFragmentRetryInterval,
         getFragmentRetryInterval: getFragmentRetryInterval,
-        setManifestRetryInterval: setManifestRetryInterval,
-        getManifestRetryInterval: getManifestRetryInterval,
         setRetryIntervalForType: setRetryIntervalForType,
         getRetryIntervalForType: getRetryIntervalForType,
         setWallclockTimeUpdateInterval: setWallclockTimeUpdateInterval,
@@ -502,10 +371,6 @@ function MediaPlayerModel() {
         getUseManifestDateHeaderTimeSource: getUseManifestDateHeaderTimeSource,
         setUTCTimingSources: setUTCTimingSources,
         getUTCTimingSources: getUTCTimingSources,
-        setXHRWithCredentialsForType: setXHRWithCredentialsForType,
-        getXHRWithCredentialsForType: getXHRWithCredentialsForType,
-        setFastSwitchEnabled: setFastSwitchEnabled,
-        getFastSwitchEnabled: getFastSwitchEnabled,
         reset: reset
     };
 
@@ -518,5 +383,4 @@ function MediaPlayerModel() {
 MediaPlayerModel.__dashjs_factory_name = 'MediaPlayerModel';
 let factory = FactoryMaker.getSingletonFactory(MediaPlayerModel);
 factory.DEFAULT_UTC_TIMING_SOURCE = DEFAULT_UTC_TIMING_SOURCE;
-FactoryMaker.updateSingletonFactory(MediaPlayerModel.__dashjs_factory_name, factory);
 export default factory;
